@@ -83,7 +83,7 @@ async def info(ctx: commands.Context):
         description="`ctqa ploice` is a clone of @milenako's 'Cat police' bot, specifically for Cat Stand. Both bots function very similarly, but with some changes, such as ctqa ploice lacking AI, dimentia chat, Cat Bot statistics commands, and not being hard coded for Cat Stand. ctqa ploice is inspired by tema5002's Cat Bot clone called `ctqa bto`, a clone of Cat Bot written in C# that is no longer online.",
         color=discord.Color.blue()
     )
-    embed.set_footer(text="ctqa police v1.1.0")
+    embed.set_footer(text="ctqa police v1.1.1")
     try:
         await ctx.send(embed=embed)
     except Exception as e:
@@ -609,13 +609,13 @@ async def yapping_city(ctx: commands.Context, action: Literal["add", "remove"], 
 
     if action == "add":
         db[guild_id]["yapping_forums"][forum_id] = True
-        await ctx.send(f"{user.mention} set {forum.mention} as a Yapping City forum.", ephemeral=False)
-        await log_action(ctx.guild, f"{user.mention} set {forum.mention} as a Yapping City forum.")
+        await ctx.send(f"{ctx.author.mention} set {forum.mention} as a Yapping City forum.", ephemeral=False)
+        await log_action(ctx.guild, f"{ctx.author.mention} set {forum.mention} as a Yapping City forum.")
     elif action == "remove":
         if forum_id in db[guild_id]["yapping_forums"]:
             del db[guild_id]["yapping_forums"][forum_id]
-            await ctx.send(f"{user.mention} unset {forum.mention} as a Yapping City forum.", ephemeral=False)
-            await log_action(ctx.guild, f"{user.mention} unset {forum.mention} as a Yapping City forum.")
+            await ctx.send(f"{ctx.author.mention} unset {forum.mention} as a Yapping City forum.", ephemeral=False)
+            await log_action(ctx.guild, f"{ctx.author.mention} unset {forum.mention} as a Yapping City forum.")
         else:
             await ctx.send(f"{forum.mention} is not marked as a Yapping City forum, idiot.", ephemeral=False)
 
