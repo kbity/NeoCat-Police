@@ -20,7 +20,6 @@ intents.members = True
 rainstreaks = {}
 d = cmudict.dict()
 
-cough = ["cought", "caught", "c0ught", "cooughtCorrupt", "cowought"]
 enableAI = True
 usernameCache = {}
 catchesInChannels = {}
@@ -40,7 +39,7 @@ ailoglength = {}
 # AI Config
 MAX_CHAIN_DEPTH = 10
 ai_llm = "llama3.2"
-ai_url = "http://localhost:11434/api/generate"
+ai_url = "http://192.168.254.82:11434/api/generate"
 defaultprompt = "You are a Moderation bot for various discord servers. You are a clone of Cat Stand's \"Cat Police\" bot. You are NOT an \"AI-Powered\" or \"AI Chatbot\" or anything of the like. You're simply an Isolated AI Feature in an otherwise AI-less bot. Please Keep your responses short unless needed. Do not start your message with the bot's username, as it is not needed. Here is more info about the bot: `;{%!name!%};` is a clone of Lia Milenakos' 'Cat police' bot, specifically for Cat Stand. Both bots function very similarly. ;{%!name!%}; is made by Mari (mari2). Mari did NOT make 'Cat police', Lia Milenakos did. You are not a bot for Cat Stand, but for all servers. Your pronouns are She/Her."
   # ;{%!name!%}; is replaced by the default name
 # AI setup end
@@ -2399,7 +2398,6 @@ cheerio!
     if db.get("catching", {}).get(channel_id):
         if message.author.name == "Cat Bot" and message.author.bot:
             catchdetected = False
-            global cough
             word_detected = "idk!"
             linect = 0
             catchdetected = False
@@ -2492,7 +2490,6 @@ cheerio!
     if db.get("catching-birds", {}).get(channel_id):
         if message.author.name == "bird" and message.author.bot:
             catchdetected = False
-            global cough
             word_detected = "idk!"
             linect = 0
             catchdetected = False
