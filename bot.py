@@ -2498,8 +2498,9 @@ cheerio!
                 embed = message.embeds[0]
                 if embed.description and len(embed.description.splitlines()) == 3:
                     catchdetected = True
+                    if len(embed.description.split()) == 0:
+                        return
                     username = embed.description.split()[0].lower()
-                    console_log(username)
 
             if catchdetected:
                 if username == "Unknown Catcher":
