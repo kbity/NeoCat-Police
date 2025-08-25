@@ -1,5 +1,5 @@
-1. get the things needed (being discord.py, typing, json, enum, time, datetime, requests, etc)
-2. edit bot.py and replace "YOUR TOKEN HERE" with a bot token
+1. get the things needed with `pip install discord.py translate nltk langdetect python-dotenv aiohttp syllables`
+2. create .env and add in TOKEN=BOT.TOKEN_12345 with "BOT.TOKEN_12345" being your bot's token
 3. run bot.py (python bot.py)
 
    its as shrimple as that, except wait
