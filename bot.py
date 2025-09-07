@@ -2003,7 +2003,7 @@ async def personality(ctx: commands.Context, mode: Literal["Disabled", "OnJoin",
         welcomemessages = servermessages(str(ctx.guild.id))
         msg = random.choice(welcomemessages)
         save_db(str(ctx.guild.id), db)
-        await ctx.response.send_message(f"Welcome messages sent to {channel.mention} will look like this:\n{db["welcome"]["emoji"]} {msg[0]}<@{ctx.user.id}>{msg[1]}")
+        await ctx.response.send_message(f"Welcome messages sent to {channel.mention} will look like this:\n{db['welcome']['emoji']} {msg[0]}<@{ctx.user.id}>{msg[1]}")
     except Exception as e:
         await ctx.channel.send(f"504 internal server error\n-# {e}")
 
