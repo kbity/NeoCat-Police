@@ -1,7 +1,7 @@
 import discord, typing, json, enum, time, datetime, aiohttp, random, asyncio, re, syllables, traceback, io, os, sys, speech_recognition
 from discord import app_commands
 from discord import StickerFormatType
-from discord.ext import commands
+from discord.ext import commands, tasks
 from discord.ext.commands import has_permissions, MissingPermissions
 from discord.ui import Button, View
 from discord.utils import get
@@ -25,6 +25,7 @@ d = cmudict.dict()
 
 enableAI = True
 usernameCache = {}
+user_ai_ratelimits = {}
 catchesInChannels = {}
 catchesInBirdChannels = {}
 defaultdctimeout = 300
@@ -243,6 +244,7 @@ async def on_ready():
     bot.session = aiohttp.ClientSession()
     await bot.tree.sync()
     console_log("yiur bto is runnign :3")
+    await ratelimit_tick.start()
 
     data_folder = "./data"
 
@@ -1595,11 +1597,11 @@ async def whitelist(ctx: commands.Context, user: discord.User, remove: bool = Fa
 @tree.command(name="setroletype", description="Set a role as a type of role (mod, underage, etc) for the bot")
 @discord.app_commands.default_permissions(manage_guild=True)
 @app_commands.describe(role_type="What kind of role", role="The role to set")
-async def setmodrole(ctx: commands.Context, role_type: Literal["admin", "mod", "minimod", "trial_mod", "functional_mod", "underage_role", "verified_role"], role: discord.Role, remove: truefalse = "no"):
+async def setmodrole(ctx: commands.Context, role_type: Literal["admin", "mod", "minimod", "trial_mod", "functional_mod", "underage_role", "verified_role", "ai_role"], role: discord.Role, remove: truefalse = "no"):
     guild_id = str(ctx.guild.id)
     db = load_db(guild_id)
 
-    notmodrole = role_type == "underage_role" or role_type == "verified_role"
+    notmodrole = role_type == "underage_role" or role_type == "verified_role" or role_type == "ai_role"
 
     if remove == "yes":
         if not notmodrole:
@@ -2312,8 +2314,34 @@ cheerio!
         else:
             garry = message.author.global_name or message.author.name
         global ailoglength
+        global user_ai_ratelimits
         currentchain = None
-        if (any(mention.id == bot.user.id for mention in message.mentions) or "@grok" in message.content or (message.channel.id in aichannels and not message.author.bot)) and not message.webhook_id:
+
+        ai_role = db.get("ai_role")
+        ai_access = True
+        if not ai_role is None:
+            if not message.guild is None:
+                ai_access = False
+                if not isinstance(message.author, discord.Member):
+                    try:
+                        member = await message.guild.fetch_member(message.author.id)
+                    except discord.NotFound:
+                        return
+                if discord.utils.get(message.author.roles, id=int(ai_role)):
+                    ai_access = True
+        
+        if message.author.id in ai_db["VIPs"]:
+            ai_ratelimited = False
+        else:
+            ai_ratelimited = True
+            if str(message.author.id) not in user_ai_ratelimits:
+                ai_ratelimited = False
+            else:
+                ai_ratelimited = True
+                user_ai_ratelimits[str(message.author.id)] = int( user_ai_ratelimits[str(message.author.id)] * 1.3)
+
+        if (any(mention.id == bot.user.id for mention in message.mentions) or "@grok" in message.content or (message.channel.id in aichannels and not message.author.bot)) and not message.webhook_id and not ai_ratelimited and ai_access:
+            user_ai_ratelimits[str(message.author.id)] = 5
             context = ""
             disableChains = False
             replycorrect = True
@@ -2401,6 +2429,11 @@ cheerio!
                     if currentchain is not None:
                         reply_chain_cache[currentchain]["Content"] = reply_chain_cache[currentchain]["Content"] + f"{name}: {trimmed_response}\n"
                         reply_chain_cache[currentchain]["IDs"].append(sent.id)
+
+        elif (any(mention.id == bot.user.id for mention in message.mentions) or "@grok" in message.content or (message.channel.id in aichannels and not message.author.bot)) and not message.webhook_id:
+            if str(message.author.id) in user_ai_ratelimits:
+                if 10 > user_ai_ratelimits[str(message.author.id)]:
+                     await message.add_reaction("⏰")
 
         if random.randint(1, 1000) == 1 or message.content == "ncpol!dothathingiforgot" and message.author.id == evaluser:
             if not ("disableFreakouts" in db and db["disableFreakouts"] == True):
@@ -2970,10 +3003,10 @@ async def print(ctx, *, prompt: str):
 
 @bot.command(help="and cat bot has a level 100 skibidi sigma mafia boss eval command")
 async def eval(ctx, *, prompt: str):
+    # complex eval, multi-line + async support
+    # requires the full `await message.channel.send(2+3)` to get the result
+    # thanks mia lilenakos
     if ctx.author.id == evaluser:
-        # complex eval, multi-line + async support
-        # requires the full `await message.channel.send(2+3)` to get the result
-        # thanks mia lilenakos
         spaced = ""
         for i in prompt.split("\n"):
             spaced += "  " + i + "\n"
@@ -3081,6 +3114,15 @@ def detect_haiku(text):
         return False
 
     return "\n".join(lines)
+
+@tasks.loop()
+async def ratelimit_tick():
+    while True:
+        for uid in list(user_ai_ratelimits.keys()):
+            user_ai_ratelimits[uid] -= 1
+            if user_ai_ratelimits[uid] <= 0:
+                del user_ai_ratelimits[uid]
+        await asyncio.sleep(1)
 
 bot.run(TOKEN)
 
