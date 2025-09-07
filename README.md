@@ -1,4 +1,4 @@
-1. get the things needed with `pip install discord.py translate nltk langdetect python-dotenv aiohttp syllables`
+1. get the things needed with `pip install discord.py translate nltk langdetect python-dotenv aiohttp syllables pydub SpeechRecognition`
 2. create .env and add in TOKEN=BOT.TOKEN_12345 with "BOT.TOKEN_12345" being your bot's token
 3. run bot.py (python bot.py)
 
