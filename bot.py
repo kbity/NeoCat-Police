@@ -2919,7 +2919,7 @@ cheerio!
                     if message.reference:
                         msglink = f"https://discord.com/channels/{message.guild.id}/{message.channel.id}/{message.reference.message_id}"
                         ogmsg = await message.channel.fetch_message(message.reference.message_id)
-                        reply_thing = f"-# ┌ <:reply:1274886824652832788> **@{ogmsg.author.replace('#0000', '')}**: {msglink}\n"
+                        reply_thing = f"-# ┌ <:reply:1274886824652832788> **@{str(ogmsg.author).replace('#0000', '')}**: {msglink}\n"
                         message_data = reply_thing + message_data
 
                     if not files:
