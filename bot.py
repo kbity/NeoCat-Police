@@ -20,6 +20,7 @@ intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
 rainstreaks = {}
+afkusers = {}
 d = cmudict.dict()
 
 enableAI = True
@@ -67,7 +68,7 @@ console_log = print # DO YOU SPEAK JAVASCRIPT??
 evil = eval
 
 TICKET_BUTTON_PREFIX = "ticket_button_wow_yay:"
-ver = "v1.3.1"
+ver = "v1.3.2"
 
 console_log("preparing...")
 
@@ -1528,29 +1529,31 @@ async def on_raw_reaction_add(payload):
                 except Exception:
                     await message.remove_reaction(emoji)
 
-@tree.command(name="yapping-city", description="Add or remove a forum as a Yapping City forum")
+@tree.command(name="setforumtype", description="set a forum to a type")
 @commands.has_permissions(manage_guild=True)
 @discord.app_commands.default_permissions(manage_guild=True)
 @app_commands.describe(action="Whether to add or remove the forum", forum="The forum channel to modify")
-async def yapping_city(ctx: commands.Context, action: Literal["add", "remove"], forum: discord.ForumChannel):
+async def yapping_city(ctx: commands.Context, action: Literal["add", "remove"], forum: discord.ForumChannel, typee: Literal["yapping_forums", "mod_forum"]):
     await ctx.response.defer()
     guild_id = str(ctx.guild.id)
     db = load_db(guild_id)
     forum_id = str(forum.id)
 
-    db.setdefault("yapping_forums", {})
+    db.setdefault(typee, {})
 
     if action == "add":
-        db["yapping_forums"][forum_id] = True
-        await ctx.followup.send(f"{ctx.user.mention} set {forum.mention} as a Yapping City forum.", ephemeral=False)
-        await log_action(ctx.guild, f"{ctx.user.mention} set {forum.mention} as a Yapping City forum.")
+        db[typee][forum_id] = True
+        res = f"{ctx.user.mention} set {forum.mention} as a `{typee}`"
+        await ctx.followup.send(res, ephemeral=False)
+        await log_action(ctx.guild, res)
     elif action == "remove":
         if forum_id in db["yapping_forums"]:
             del db["yapping_forums"][forum_id]
-            await ctx.followup.send(f"{ctx.user.mention} unset {forum.mention} as a Yapping City forum.", ephemeral=False)
-            await log_action(ctx.guild, f"{ctx.user.mention} unset {forum.mention} as a Yapping City forum.")
+            res = f"{ctx.user.mention} unset {forum.mention} as a `{typee}`"
+            await ctx.followup.send(res, ephemeral=False)
+            await log_action(ctx.guild, res)
         else:
-            await ctx.followup.send(f"{forum.mention} is not marked as a Yapping City forum, idiot.", ephemeral=False)
+            await ctx.followup.send(f"{forum.mention} is not a `{typee}`, idiot.", ephemeral=False)
 
     save_db(guild_id, db)
 
@@ -1962,6 +1965,52 @@ async def unyap(interaction: discord.Interaction, message: discord.Message):
     await interaction.followup.send(text, ephemeral=False)
 bot.tree.add_command(unyap)
 
+@tree.command(name="afk", description="WE'RE DOING SOME MINING 'OFF CAMERA' WITH THIS ONE 🗣️🗣️🗣️🔥🔥🔥🔥🔥")
+async def afk(ctx: commands.Context, afkmsg: str = "This user is AFK!", timer: int = 15):
+    if not ctx.guild:
+        return await ctx.response.send_message(f"what the fu- *magically crumbles*", ephemeral=True)
+    if timer > 120:
+        return await ctx.response.send_message(f"max time is 2 minutes/120 seconds", ephemeral=True)
+    if timer < 0:
+        return await ctx.response.send_message(f"rule 714: no time travel", ephemeral=True)
+
+    global afkusers
+    afkusers.setdefault(str(ctx.guild.id), {})
+    try:
+        if str(ctx.user.id) in afkusers[str(ctx.guild.id)]:
+            return await ctx.response.send_message(f"send a message to exit afk!", ephemeral=True)
+        await ctx.response.defer(ephemeral=False)
+        replymsg = await ctx.followup.send(f"<:neocat_sleeping:1414327462699073557> going afk <t:{int(time.time())+timer}:R>\nill tell people who ping you:\n{afkmsg}\n\nsend a message to go out of afk!", wait=True)
+
+        await asyncio.sleep(timer)
+
+        if str(ctx.user.id) in afkusers[str(ctx.guild.id)]:
+            await ctx.followup.send("you can only be afk once at a time, as you being afk twice would cause a glitch in the universe", ephemeral=True)
+            return
+
+        afkusers[str(ctx.guild.id)][str(ctx.user.id)] = afkmsg
+        await replymsg.add_reaction("💤")
+        garry = "Unknown Name"
+    
+        member = ctx.guild.get_member(ctx.user.id)
+        if member is None:
+            try:
+                member = await ctx.guild.fetch_member(ctx.user.id)
+            except Exception:
+                garry = ctx.user.global_name or ctx.user.name
+        if member is None:
+            garry = ctx.user.global_name or ctx.user.name
+        else:
+            garry = member.nick or member.global_name or member.name
+
+        new_nickname = "[afk] " + garry
+        try:
+            await ctx.user.edit(nick=new_nickname[:32])
+        except Exception:
+            pass
+    except Exception as e:
+        await ctx.channel.send(f"504 internal server error\n-# {e}")
+
 @tree.command(name="welcome-configure", description="set up welcoming")
 @discord.app_commands.default_permissions(manage_guild=True)
 @app_commands.describe(mode="on join, on verify, or disable")
@@ -2213,6 +2262,17 @@ async def clear(ctx: commands.Context):
 ## END
 
 @bot.event
+async def on_thread_create(thread: discord.Thread):
+    guild_id = str(thread.guild.id)
+    db = load_db(guild_id)
+    mod_forum = db.get("mod_forum", {})
+    main_post = thread.parent
+    if str(main_post.id) in db["mod_forum"]:
+        if db["mod_forum"][str(main_post.id)]:
+            starter_message = await thread.fetch_message(thread.id)
+            await starter_message.pin()
+
+@bot.event
 async def on_message(message: discord.Message):
     if message.author == bot.user:
         return
@@ -2391,6 +2451,7 @@ cheerio!
         return
 
     global rainstreaks
+    global afkusers
     global usernameCache
     global catchesInChannels
     global catchesInBirdChannels
@@ -2399,6 +2460,7 @@ cheerio!
 
     # i forgor what this does
     channel_id = str(message.channel.id)
+    afkusers.setdefault(str(message.guild.id), {})
 
     mod_roles = db.get("mod_roles", {})
     mod_role = message.guild.get_role(int(mod_roles.get("mod"))) if mod_roles.get("mod") else None
@@ -2427,6 +2489,34 @@ cheerio!
     else:
         is_mod = False
         is_kinda_mod = False
+
+    # afk stuff
+    if str(message.author.id) in afkusers[str(message.guild.id)]:
+        afkusers[str(message.guild.id)].pop(str(message.author.id), None)
+        await message.reply("welcome back!")
+        member = message.guild.get_member(message.author.id)
+        reset_nickname = False
+
+        if member is None:
+            try:
+                member = await ctx.guild.fetch_member(ctx.user.id)
+            except Exception:
+                pass
+
+        if member and member.nick and "[afk]" in member.nick:
+            reset_nickname = True
+
+        if reset_nickname:
+            try:
+                new_nick = member.nick.replace("[afk]", "")
+                await member.edit(nick=new_nick)
+            except Exception:
+                pass
+
+    for afkuser in afkusers[str(message.guild.id)]:
+        if f"<@{afkuser}>" in message.content:
+            afkuser = await message.guild.fetch_member(afkuser)
+            await message.reply(f"{afkuser} is afk: {afkusers[str(message.guild.id)][str(afkuser.id)]}")
 
     # tags yay
     if message.content[:4] == "tag!" and is_kinda_mod:
@@ -2793,6 +2883,12 @@ cheerio!
                                         fp.seek(0)
                                         files.append(discord.File(fp, filename=attachment.filename))
 
+                    if message.reference:
+                        msglink = f"https://discord.com/channels/{message.guild.id}/{message.channel.id}/{message.reference.message_id}"
+                        ogmsg = await message.channel.fetch_message(message.reference.message_id)
+                        reply_thing = f"-# ┌ <:reply:1274886824652832788> **@{ogmsg.author.replace('#0000', '')}**: {msglink}\n"
+                        message_data = reply_thing + message_data
+
                     if not files:
                         message_data = message_data or "-# no message content\n"
 
@@ -2805,6 +2901,7 @@ cheerio!
                         allowed_mentions=discord.AllowedMentions.none(),
                         thread=message.channel
                     )
+
 
                 restoer = discord.ui.Button(label="Restore to thread", style=discord.ButtonStyle.secondary)
                 restoer.callback = restore_to_thread
