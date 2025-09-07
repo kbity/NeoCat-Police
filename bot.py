@@ -1,13 +1,15 @@
-import discord, typing, json, enum, time, datetime, aiohttp, random, asyncio, re, syllables, traceback, io, os, sys
-
-from translate import Translator
-from nltk.corpus import cmudict
-from langdetect import detect
+import discord, typing, json, enum, time, datetime, aiohttp, random, asyncio, re, syllables, traceback, io, os, sys, speech_recognition
 from discord import app_commands
+from discord import StickerFormatType
 from discord.ext import commands
 from discord.ext.commands import has_permissions, MissingPermissions
 from discord.ui import Button, View
 from discord.utils import get
+
+from pydub import AudioSegment
+from translate import Translator
+from nltk.corpus import cmudict
+from langdetect import detect
 from typing import Literal
 from dotenv import load_dotenv
 
@@ -65,6 +67,7 @@ console_log = print # DO YOU SPEAK JAVASCRIPT??
 evil = eval
 
 TICKET_BUTTON_PREFIX = "ticket_button_wow_yay:"
+ver = "v1.3.1"
 
 console_log("preparing...")
 
@@ -336,7 +339,7 @@ async def info(ctx: commands.Context):
         description="`NeoCat Police` (formerly called ctqa ploice) is a clone of @milenakos' 'Cat police' bot, specifically for Cat Stand. Both bots function very similarly, but with some changes, such as NeoCat Police lacking Cat Bot statistics commands, not being hard coded for Cat Stand, and adding a few more features. NeoCat Police is inspired by tema5002's Cat Bot clone called `ctqa bto`, a clone of Cat Bot written in C# that is no longer online, hence the name \"ctqa ploice\"\n\nty morky for slight assistance.",
         color=discord.Color.blue()
     )
-    embed.set_footer(text="NeoCat Police v1.3.0")
+    embed.set_footer(text=f"NeoCat Police {ver}")
     try:
         await ctx.response.send_message(embed=embed)
     except Exception as e:
@@ -1021,45 +1024,46 @@ class logtypes(str, enum.Enum):
 @app_commands.describe(channel="where the logs go")
 @app_commands.describe(channel="remove?")
 async def log(ctx: commands.Context, type: logtypes, channel: discord.TextChannel, remove: truefalse = "no"):
+    await ctx.response.defer()
     server_id = str(ctx.guild.id)
     db = load_db(server_id)
 
     if remove == "yes":
         if type.lower() == "message":
             db.pop("message_log_channel", None)
-            await ctx.response.send_message(f"message logs will go nowhere")
+            await ctx.followup.send(f"message logs will go nowhere")
         elif type.lower() == "action":
             db.pop("action_log_channel", None)
-            await ctx.response.send_message(f"action logs will go nowhere")
+            await ctx.followup.send(f"action logs will go nowhere")
         elif type.lower() == "spammy":
             db.pop("spammy_log_channel", None)
-            await ctx.response.send_message(f"spammy logs will go nowhere")
+            await ctx.followup.send(f"spammy logs will go nowhere")
         elif type.lower() == "reaction":
             db.pop("reaction_log_channel", None)
-            await ctx.response.send_message(f"reaction logs will go nowhere")
+            await ctx.followup.send(f"reaction logs will go nowhere")
         elif type.lower() == "tickets":
             db.pop("ticket_log_channel", None)
-            await ctx.response.send_message(f"tickets will go nowhere")
+            await ctx.followup.send(f"tickets will go nowhere")
         else:
-            await ctx.response.send_message("Invalid type! Choose either `message`, `action`, `spammy`, `reaction`, or `tickets`.")
+            await ctx.followup.send("Invalid type! Choose either `message`, `action`, `spammy`, `reaction`, or `tickets`.")
     else:
         if type.lower() == "message":
             db["message_log_channel"] = channel.id
-            await ctx.response.send_message(f"message logs will go to {channel.mention}")
+            await ctx.followup.send(f"message logs will go to {channel.mention}")
         elif type.lower() == "action":
             db["action_log_channel"] = channel.id
-            await ctx.response.send_message(f"action logs will go to {channel.mention}")
+            await ctx.followup.send(f"action logs will go to {channel.mention}")
         elif type.lower() == "spammy":
             db["spammy_log_channel"] = channel.id
-            await ctx.response.send_message(f"spammy logs will go to {channel.mention}")
+            await ctx.followup.send(f"spammy logs will go to {channel.mention}")
         elif type.lower() == "reaction":
             db["reaction_log_channel"] = channel.id
-            await ctx.response.send_message(f"reaction logs will go to {channel.mention}")
+            await ctx.followup.send(f"reaction logs will go to {channel.mention}")
         elif type.lower() == "tickets":
             db["ticket_log_channel"] = channel.id
-            await ctx.response.send_message(f"tickets will go to {channel.mention}")
+            await ctx.followup.send(f"tickets will go to {channel.mention}")
         else:
-            await ctx.response.send_message("Invalid type! Choose either `message`, `action`, `spammy`, `reaction`, or `tickets`.")
+            await ctx.followup.send("Invalid type! Choose either `message`, `action`, `spammy`, `reaction`, or `tickets`.")
 
     save_db(server_id, db)
 
@@ -1097,12 +1101,12 @@ async def log_ticket(guild: discord.Guild, content: str):
 @app_commands.describe(bowleen="true or false")
 @app_commands.describe(stirng="WORDS!!")
 @app_commands.describe(integir="m a t h")
-async def configure(ctx: commands.Context, proporty: Literal["disableFreakouts", "disableAI", "CustomCatchMessages", "ReverseSlice", "DCTimeout", "DCTimeout_Bird", "DCRuleNumber", "CustomUsernameSlice", "appeal_message", "CatchKeyword"], bowleen: bool = True, stirng: str = "Default", integir: int = 0):
+async def configure(ctx: commands.Context, proporty: Literal["disableFreakouts", "disableAI", "disableUnyap", "DCTimeout", "DCTimeout_Bird", "DCRuleNumber", "appeal_message"], bowleen: bool = True, stirng: str = "Default", integir: int = 0):
     try:
         await ctx.response.defer(ephemeral=False)
-        boolprops = ["disableFreakouts", "disableAI", "CustomCatchMessages", "ReverseSlice"]
-        strprops = ["appeal_message", "CatchKeyword"]
-        intprops = ["DCTimeout", "DCTimeout_Bird", "DCRuleNumber", "CustomUsernameSlice"]
+        boolprops = ["disableFreakouts", "disableAI", "disableUnyap"]
+        strprops = ["appeal_message"]
+        intprops = ["DCTimeout", "DCTimeout_Bird", "DCRuleNumber"]
 
         guild_id = str(ctx.guild.id)
         db = load_db(guild_id)
@@ -1170,9 +1174,13 @@ async def on_message_delete(message: discord.Message):
                         except Exception as e:
                             console_log(f"Failed to download attachment: {attachment.url} — {e}")
             hblock = ""
-            mewhenthemoddeletesmymessage = await anext(message.guild.audit_logs(action=discord.AuditLogAction.message_delete, limit=1))
-            if mewhenthemoddeletesmymessage.target.id == message.author.id and mewhenthemoddeletesmymessage.extra.channel.id == message.channel.id:
-                hblock = f" by {mewhenthemoddeletesmymessage.user}"
+            try:
+                mewhenthemoddeletesmymessage = await anext(message.guild.audit_logs(action=discord.AuditLogAction.message_delete, limit=1))
+            except Exception:
+                mewhenthemoddeletesmymessage = None
+            if mewhenthemoddeletesmymessage is not None:
+                if mewhenthemoddeletesmymessage.target.id == message.author.id and mewhenthemoddeletesmymessage.extra.channel.id == message.channel.id:
+                    hblock = f" by {mewhenthemoddeletesmymessage.user}"
 
             embed.set_author(name=f"{message.author}'s message was deleted{hblock}", icon_url=message.author.display_avatar.url)
             embed.set_footer(text=f"#{message.channel.name}")
@@ -1470,13 +1478,9 @@ async def on_raw_reaction_add(payload):
 
                 if webhook is None:
                     # Webhook is missing or invalid; create a new one
-                    async with aiohttp.ClientSession() as session:
-                        async with session.get("https://i.imgur.com/yHPNPoQ.png") as resp:
-                            avatar_bytes = await resp.read() if resp.status == 200 else None
 
                     webhook_obj = await starboard_channel.create_webhook(
-                        name="ctqa ploice webhook",
-                        avatar=avatar_bytes
+                        name="ctqa ploice webhook"
                     )
                     webhook_id = webhook_obj.id
                     db[f"starboard_webhook_id{suffix}"] = webhook_id
@@ -1496,7 +1500,7 @@ async def on_raw_reaction_add(payload):
                 author_name = author_name[:80] if len(author_name) > 80 else author_name
                 avatar_url = message.author.display_avatar.url if message.author.display_avatar else None
                 messageIsLink = message.content.lower().endswith('.png') or message.content.lower().endswith('.jpg') or message.content.lower().endswith('.jpeg') or message.content.lower().endswith('.gif') or message.content.lower().endswith('.webp') or message.content.lower().endswith('.gifv')
-                if "tenor.com" in message.content.lower() or messageIsLink or "media.discordapp.net" in message.content.lower():
+                if "tenor.com" in message.content.lower() or messageIsLink or "media.discordapp.net" in message.content.lower() or "cdn.discordapp.com" in message.content.lower():
                     embeds = []
                 else:
                     embeds = message.embeds
@@ -1529,6 +1533,7 @@ async def on_raw_reaction_add(payload):
 @discord.app_commands.default_permissions(manage_guild=True)
 @app_commands.describe(action="Whether to add or remove the forum", forum="The forum channel to modify")
 async def yapping_city(ctx: commands.Context, action: Literal["add", "remove"], forum: discord.ForumChannel):
+    await ctx.response.defer()
     guild_id = str(ctx.guild.id)
     db = load_db(guild_id)
     forum_id = str(forum.id)
@@ -1537,15 +1542,15 @@ async def yapping_city(ctx: commands.Context, action: Literal["add", "remove"], 
 
     if action == "add":
         db["yapping_forums"][forum_id] = True
-        await ctx.response.send_message(f"{ctx.user.mention} set {forum.mention} as a Yapping City forum.", ephemeral=False)
+        await ctx.followup.send(f"{ctx.user.mention} set {forum.mention} as a Yapping City forum.", ephemeral=False)
         await log_action(ctx.guild, f"{ctx.user.mention} set {forum.mention} as a Yapping City forum.")
     elif action == "remove":
         if forum_id in db["yapping_forums"]:
             del db["yapping_forums"][forum_id]
-            await ctx.response.send_message(f"{ctx.user.mention} unset {forum.mention} as a Yapping City forum.", ephemeral=False)
+            await ctx.followup.send(f"{ctx.user.mention} unset {forum.mention} as a Yapping City forum.", ephemeral=False)
             await log_action(ctx.guild, f"{ctx.user.mention} unset {forum.mention} as a Yapping City forum.")
         else:
-            await ctx.response.send_message(f"{forum.mention} is not marked as a Yapping City forum, idiot.", ephemeral=False)
+            await ctx.followup.send(f"{forum.mention} is not marked as a Yapping City forum, idiot.", ephemeral=False)
 
     save_db(guild_id, db)
 
@@ -1914,6 +1919,48 @@ async def translate(interaction: discord.Interaction, message: discord.Message):
     else:
         await interaction.followup.send(f"{translation}\n-# Translated from {detected}", ephemeral=True)
 bot.tree.add_command(translate)
+
+@app_commands.context_menu(name="unyap")
+async def unyap(interaction: discord.Interaction, message: discord.Message):
+    tskt = speech_recognition.Recognizer()
+    await interaction.response.defer(ephemeral=False)
+
+    if not message.attachments:
+        await interaction.followup.send("<:picardia_woozy:1145359652691923085>", ephemeral=False)
+        return
+    audio_urls = [
+        a.url for a in message.attachments
+        if a.content_type and a.content_type.startswith("audio/")
+    ]
+    if not audio_urls:
+        await interaction.followup.send("<:picardia_woozy:1145359652691923085>", ephemeral=False)
+        return
+    audio_url = audio_urls[0]
+    async with aiohttp.ClientSession() as session:
+        async with session.get(audio_url) as resp:
+            if resp.status == 200:
+                audio = await resp.read()
+            else:
+                audio = None
+    if audio == None:
+        await interaction.followup.send("<:picardia_woozy:1145359652691923085>", ephemeral=False)
+        return
+
+    try:
+        audio_file = io.BytesIO(audio)
+        segment = AudioSegment.from_file(audio_file)
+        wav_io = io.BytesIO()
+        segment.export(wav_io, format="wav")
+        wav_io.seek(0)
+
+        with speech_recognition.AudioFile(wav_io) as source:
+            audio_data = tskt.record(source)
+            text = tskt.recognize_google(audio_data)
+    except Exception:
+        text = "no yapping detected (most likely unsupported file format)"
+
+    await interaction.followup.send(text, ephemeral=False)
+bot.tree.add_command(unyap)
 
 @tree.command(name="welcome-configure", description="set up welcoming")
 @discord.app_commands.default_permissions(manage_guild=True)
@@ -2353,6 +2400,82 @@ cheerio!
     # i forgor what this does
     channel_id = str(message.channel.id)
 
+    mod_roles = db.get("mod_roles", {})
+    mod_role = message.guild.get_role(int(mod_roles.get("mod"))) if mod_roles.get("mod") else None
+    admin_role = message.guild.get_role(int(mod_roles.get("admin"))) if mod_roles.get("admin") else None
+    junior_role = message.guild.get_role(int(mod_roles.get("minimod"))) if mod_roles.get("minimod") else None
+    trial_role = message.guild.get_role(int(mod_roles.get("trial_mod"))) if mod_roles.get("trial_mod") else None
+    functional_role = message.guild.get_role(int(mod_roles.get("functional_mod"))) if mod_roles.get("functional_mod") else None
+
+    if isinstance(message.author, discord.Member):
+        is_kinda_mod = (
+            message.author.guild_permissions.moderate_members
+            or message.author.guild_permissions.administrator
+            or (mod_role in message.author.roles if mod_role else False)
+            or (admin_role in message.author.roles if admin_role else False)
+            or (trial_role in message.author.roles if trial_role else False)
+            or (junior_role in message.author.roles if junior_role else False)
+            or (functional_role in message.author.roles if functional_role else False)
+        )
+
+        is_mod = (
+            message.author.guild_permissions.ban_members
+            or message.author.guild_permissions.administrator
+            or (mod_role in message.author.roles if mod_role else False)
+            or (admin_role in message.author.roles if admin_role else False)
+        )
+    else:
+        is_mod = False
+        is_kinda_mod = False
+
+    # tags yay
+    if message.content[:4] == "tag!" and is_kinda_mod:
+        db.setdefault("tags", {})
+        tag = message.content.split(' ', 1)[0][4:]
+        if tag in db["tags"]:
+            if message.reference:
+                replysage = await message.channel.fetch_message(message.reference.message_id)
+                triggerblock = f"\n-# triggered by {message.author}"
+                slicelenny = 2000 - len(triggerblock)
+                cont = db["tags"][tag][:slicelenny] + triggerblock
+                await replysage.reply(content=cont, allowed_mentions=discord.AllowedMentions.none())
+                await message.delete()
+            else:
+                await message.reply(content=db["tags"][tag], allowed_mentions=discord.AllowedMentions.none())
+
+    if message.content == "taglist!" and is_kinda_mod:
+        db.setdefault("tags", {})
+        msg = ""
+        for tag in db["tags"]:
+            msg = msg + tag + "\n"
+        if not msg == "":
+            if len(msg) > 2000:
+                await message.reply(content=f"{msg[:1950]}...\nbtw there's too many tags to list them all", allowed_mentions=discord.AllowedMentions.none())
+            else:
+                await message.reply(content=msg[:2000], allowed_mentions=discord.AllowedMentions.none())
+        else:
+            await message.reply(content="https://cdn.discordapp.com/attachments/1280049877249687562/1414067513917964350/no_tags__.gif", allowed_mentions=discord.AllowedMentions.none())
+
+    if message.content[:10] == "createtag!" and is_mod:
+        db.setdefault("tags", {})
+        tag = message.content.split(' ', 1)[0][10:]
+        if len(message.content.split(' ', 1)) == 1:
+            await message.reply("me when empty tag:")
+        else:
+            data = message.content.split(' ', 1)[1][:2000]
+            db["tags"][tag] = data
+            await message.reply(content=f"preview:\n{data}"[:2000], allowed_mentions=discord.AllowedMentions.none())
+            save_db(message.guild.id, db)
+
+    if message.content[:10] == "deletetag!" and is_mod:
+        db.setdefault("tags", {})
+        tag = message.content.split(' ', 1)[0][10:]
+        db["tags"].pop(tag, None)
+        await message.reply("assuming that tag existed it got deleted")
+        save_db(message.guild.id, db)
+
+    # rain stuffe
+
     rainstreaks.setdefault(message.channel.id, 0)
     isarainmsg = 0
     if "cat rain has ended" in message.content.lower():
@@ -2371,6 +2494,38 @@ cheerio!
             perms.send_messages=True
             await message.channel.set_permissions(message.guild.default_role, overwrite=perms)
             rainstreaks[message.channel.id] = 0
+
+    # unyappering
+    if len(message.attachments) == 1 and not ("disableUnyap" in db and db["disableUnyap"] == True):
+        attachment = message.attachments[0]
+        if attachment.filename == "voice-message.ogg":
+            tskt = speech_recognition.Recognizer()
+            audio_urls = [
+            a.url for a in message.attachments
+            if a.content_type and a.content_type.startswith("audio/")
+            ]
+            audio_url = audio_urls[0]
+            async with aiohttp.ClientSession() as session:
+                async with session.get(audio_url) as resp:
+                    if resp.status == 200:
+                        audio = await resp.read()
+                    else:
+                        audio = None
+            if not audio == None:
+                try:
+                    audio_file = io.BytesIO(audio)
+                    segment = AudioSegment.from_file(audio_file)
+                    wav_io = io.BytesIO()
+                    segment.export(wav_io, format="wav")
+                    wav_io.seek(0)
+
+                    with speech_recognition.AudioFile(wav_io) as source:
+                        audio_data = tskt.record(source)
+                        text = tskt.recognize_google(audio_data)
+                except Exception:
+                    pass
+
+                await message.reply("```" + text + "```")
 
     # Check if it's a slow catching channel
     if db.get("slow_catching", {}).get(channel_id):
@@ -2479,7 +2634,7 @@ cheerio!
                     if not correctchannel and correcttime:
                         await message.reply(f":warning: __**{RuleH} - No double catching.**__\nYou caught a cat in another channel in the past {mins} minutes. Please gift this catch to the peson who caught the previous cat in this channel and don't double catch in the future.")
                         modlog(str(guild_id), str(catchuserId), bot.user.id, "double-catching", "warn")
-                        await log_action(message.guild, f"{username} tried catching a cat in <#{message.channel.id}> less than {mins} minutes after a catch in another channel.")
+                        await log_action(message.guild, f"{username} tried catching a [cat](https://discord.com/channels/{message.guild.id}/{message.channel.id}/{message.id}) in <#{message.channel.id}> less than {mins} minutes after a catch in another channel.")
                     else:
                         catchesInChannels[guild_id][str(catchuserId)]["catchChannel"] = message.channel.id
                         catchesInChannels[guild_id][str(catchuserId)]["catchTimeout"] = kreisi_time
@@ -2532,7 +2687,7 @@ cheerio!
                     if not correctchannel and correcttime:
                         await message.reply(f":warning: __**{RuleH} - No double catching.**__\nYou caught a bird in another channel in the past {mins} minutes. Please gift this catch to the peson who caught the previous bird in this channel and don't double catch in the future.")
                         modlog(str(guild_id), str(catchuserId), bot.user.id, "double-catching", "warn")
-                        await log_action(message.guild, f"{username} tried catching a bird in <#{message.channel.id}> less than {mins} minutes after a catch in another channel.")
+                        await log_action(message.guild, f"{username} tried catching a [bird](https://discord.com/channels/{message.guild.id}/{message.channel.id}/{message.id}) in <#{message.channel.id}> less than {mins} minutes after a catch in another channel.")
                     else:
                         catchesInBirdChannels[guild_id][str(catchuserId)]["catchChannel"] = message.channel.id
                         catchesInBirdChannels[guild_id][str(catchuserId)]["catchTimeout"] = kreisi_time
@@ -2547,41 +2702,118 @@ cheerio!
     if isinstance(message.channel, discord.Thread) and str(message.channel.parent_id) in yapping_forums:
         thread = message.channel
         commandByOP = 0
+        deleteYcMsg = True
         if message.interaction_metadata:
             if message.interaction_metadata.user.id == thread.owner_id:
                 commandByOP = 1
         if message.author.id == thread.owner_id or commandByOP:
-            return  # thread creator is allowed and bots they use are allowed
+            deleteYcMsg = False
+        if message.webhook_id:
+            deleteYcMsg = False
         if str(thread.id) in whitelists and message.author.id in whitelists[str(thread.id)]:
-            return  # whitelisted user is allowed
+            deleteYcMsg = False
 
-        try:
-            # Download attachments first
-            files = []
-            if message.attachments:
-                async with aiohttp.ClientSession() as session:
-                    for attachment in message.attachments:
-                        async with session.get(attachment.url) as resp:
-                            if resp.status == 200:
-                                data = await resp.read()
-                                fp = io.BytesIO(data)
-                                fp.seek(0)
-                                files.append(discord.File(fp, filename=attachment.filename))
+        if deleteYcMsg:
+            try:
+                files = []
+                if message.attachments:
+                    async with aiohttp.ClientSession() as session:
+                        for attachment in message.attachments:
+                            async with session.get(attachment.url) as resp:
+                                if resp.status == 200:
+                                    data = await resp.read()
+                                    fp = io.BytesIO(data)
+                                    fp.seek(0)
+                                    files.append(discord.File(fp, filename=attachment.filename))
 
-            await message.delete()
+                await message.delete()
+                embed = discord.Embed(color=discord.Color.from_str("#ff0000"))
 
-            # Build the embed
-            embed = discord.Embed(color=discord.Color.from_str("#ff0000"))
+                if message.content:
+                    embed.description = message.content[:4096]
+                if message.reference:
+                    embed.add_field(name="Reply to", value=message.reference.jump_url)
+                embed.set_author(name=f"{message.author}'s message was deleted", icon_url=message.author.display_avatar.url)
+                embed.set_footer(text=f"#{message.channel.name}")
 
-            if message.content:
-                embed.description = message.content[:4096]
-            embed.set_author(name=f"{message.author}'s message was deleted", icon_url=message.author.display_avatar.url)
-            embed.set_footer(text=f"#{message.channel.name}")
+                thread_owner = await message.guild.fetch_member(thread.owner_id)
 
-            thread_owner = await message.guild.fetch_member(thread.owner_id)
-            await thread_owner.send(embed=embed, files=files, allowed_mentions=discord.AllowedMentions.none())
-        except Exception as e:
-            console_log(f"Error deleting message or sending DM: {e}")
+                async def restore_to_thread(interaction: discord.Interaction):
+                    await interaction.response.defer()
+
+                    db.setdefault("webhooks", {})
+
+                    webhook = None
+                    webhook_id = False
+
+                    yappost = message.channel.parent
+
+                    if str(yappost.id) in db["webhooks"]:
+                        webhook_id = db["webhooks"][str(yappost.id)]
+
+                    if webhook_id:
+                        try:
+                            webhooks = await yappost.webhooks()
+                            webhook = discord.utils.get(webhooks, id=webhook_id)
+                        except (discord.NotFound, discord.Forbidden):
+                            webhook = None
+
+                    if webhook is None:
+                        webhook_obj = await yappost.create_webhook(
+                            name="ctqa ploice webhook"
+                        )
+                        webhook_id = webhook_obj.id
+                        db["webhooks"][str(yappost.id)] = webhook_id
+                        save_db(message.guild.id, db)
+                        webhook = webhook_obj
+
+                    author_name = f"{message.author.display_name}"
+                    avatar_url = message.author.display_avatar.url if message.author.display_avatar else None
+
+                    sticker_data = ""
+                    message_data = message.content[:2000]
+                    if message.stickers:
+                        sticker = message.stickers[0]
+                        if sticker.format == StickerFormatType.gif:
+                            suffix = ".gif"
+                        else:
+                            suffix = ".png"
+                        sticker_data = f"[{sticker.name}](https://media.discordapp.net/stickers/{sticker.id}{suffix})"
+
+                    message_data = message_data + sticker_data
+
+                    files = []
+                    if interaction.message.attachments:
+                        async with aiohttp.ClientSession() as session:
+                            for attachment in interaction.message.attachments:
+                                async with session.get(attachment.url) as resp:
+                                    if resp.status == 200:
+                                        data = await resp.read()
+                                        fp = io.BytesIO(data)
+                                        fp.seek(0)
+                                        files.append(discord.File(fp, filename=attachment.filename))
+
+                    if not files:
+                        message_data = message_data or "-# no message content\n"
+
+                    await webhook.send(
+                        content=message_data[:2000],
+                        username=author_name,
+                        avatar_url=avatar_url,
+                        files=files,
+                        wait=True,
+                        allowed_mentions=discord.AllowedMentions.none(),
+                        thread=message.channel
+                    )
+
+                restoer = discord.ui.Button(label="Restore to thread", style=discord.ButtonStyle.secondary)
+                restoer.callback = restore_to_thread
+                view = discord.ui.View()
+                view.add_item(restoer)
+
+                await thread_owner.send(embed=embed, files=files, allowed_mentions=discord.AllowedMentions.none(), view=view)
+            except Exception as e:
+                console_log(f"Error deleting message or sending DM: {e}")
 
     if not underage_role is None:
         if not message.guild is None:
