@@ -1,4 +1,4 @@
-import discord, typing, json, enum, time, datetime, aiohttp, random, asyncio, re, syllables, traceback, io, os, sys, speech_recognition, subprocess
+import discord, typing, json, enum, time, datetime, aiohttp, random, asyncio, re, syllables, traceback, io, os, sys, speech_recognition, subprocess, base64
 from discord import app_commands
 from discord import StickerFormatType
 from discord.ext import commands, tasks
@@ -16,59 +16,43 @@ from datetime import datetime, timezone, timedelta
 
 load_dotenv()
 TOKEN = os.getenv("TOKEN")
+cfg = json.load(open(f"config.json", 'r')) # load config file
 
 intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
-rainstreaks = {}
 afkusers = {}
 sleepycatch = {}
 bannersubmissions = {}
+spoilerspammedonce = {}
 d = cmudict.dict()
-
-enableAI = True
 usernameCache = {}
 user_ai_ratelimits = {}
 catchesInChannels = {}
 catchesInBirdChannels = {}
-defaultdctimeout = 300
 
-emojis = {}
-emojis["memberjoin"] = "<:member_join:1394060667660533953>"
-emojis["neocat_police"] = "<:neocat_police:1366561652870217759>"
-emojis["tips"] = "<:tips:1365575538986450996>"
-emojis["neocat_cry"] = "<:neocat_cry:1421380450445824120>"
-emojis["normal"] = "<:normal:1415470137464717373>"
-emojis["pointlaugh"] = "<:pointlaugh:1392872064574033950>"
-emojis["bwomp"] = "<:bowomp:1397417015047618621>"
-emojis["picardia_woozy"] = "<:picardia_woozy:1421675453495640125>"
-emojis["neocat_sleeping"] = "<:neocat_sleeping:1414327462699073557>"
-emojis["reply"] = "<:reply:1274886824652832788>"
-emojis["cat_thumbs"] = "<:cat_thumbs:1421389384590295040>"
+evaluser = cfg["evaluser"]
+kreisi_links = cfg["kreisilinks"]
+enableAI = cfg["enableAI"]
+emojis = cfg["emojis"]
+defaultdctimeout = cfg["defaultdctimeout"]
 
-evaluser = 798072830595301406
-kreisi_links = ["https://cdn.discordapp.com/attachments/1138892966782578738/1409079629209145405/image.png",
-"https://cdn.discordapp.com/attachments/1138892966782578738/1409079727561637919/image.png",
-"https://cdn.discordapp.com/attachments/1138892966782578738/1409079782884507658/image.png",
-"https://cdn.discordapp.com/attachments/1138892966782578738/1409079847799623750/image.png",
-"https://cdn.discordapp.com/attachments/1138892966782578738/1409079886466777210/image.png",]
+# AI setup
+reply_chain_cache = {}
+ailoglength = {}
+
+# AI Config
+MAX_CHAIN_DEPTH = cfg["maxchaindepth"]
+ai_llm = cfg["ai_llm"]
+ai_url = cfg["ai_url"]
+defaultprompt = cfg["ai_prompt"]
+# ;{%!name!%}; is replaced by the default name
+# AI setup end
 
 mlav = None
 with open("img.png", "rb") as image:
   f = image.read()
   mlav = bytearray(f)
-
-# AI setup
-reply_chain_cache = {}
-ailoglength = {}
-# AI Config
-MAX_CHAIN_DEPTH = 10
-ai_llm = "llama3.2"
-ai_url = "http://192.168.254.82:11434/api/generate"
-defaultprompt = "You are a Moderation bot for various discord servers. You are a clone of Cat Stand's \"Cat Police\" bot. You are NOT an \"AI-Powered\" or \"AI Chatbot\" or anything of the like. You're simply an Isolated AI Feature in an otherwise AI-less bot. Please Keep your responses short unless needed. Do not start your message with the bot's username, as it is not needed. Here is more info about the bot: `;{%!name!%};` is a clone of Lia Milenakos' 'Cat police' bot, specifically for Cat Stand. Both bots function very similarly. ;{%!name!%}; is made by Mari (mari2). Mari did NOT make 'Cat police', Lia Milenakos did. You are not a bot for Cat Stand, but for all servers. Your pronouns are She/Her."
-  # ;{%!name!%}; is replaced by the default name
-# AI setup end
-
 default_join_emoji = emojis["memberjoin"]
 default_join_messages = [
     ["A wild ", " appeared."],
@@ -90,15 +74,14 @@ console_log = print # DO YOU SPEAK JAVASCRIPT??
 evil = eval
 
 TICKET_BUTTON_PREFIX = "ticket_button_wow_yay:"
-ver = "v1.3.5"
-
+ver = "v1.3.6"
 console_log("preparing...")
 
 # make folders
 os.makedirs("data", exist_ok=True)
 os.makedirs("modlogs", exist_ok=True)
 
-bot = commands.Bot(command_prefix='ncpol!', intents=intents)
+bot = commands.Bot(command_prefix=cfg["prefix"], intents=intents)
 tree = bot.tree
 
 bot.session = None
@@ -263,10 +246,14 @@ class TicketButton(discord.ui.View):
 
     @discord.ui.button(label="Open a ticket", style=discord.ButtonStyle.primary, custom_id=f"{TICKET_BUTTON_PREFIX}ticket_button")
     async def persistent_button_callback(self, interaction: discord.Interaction, button: discord.ui.Button):
+        db = load_db(str(interaction.guild.id))
+        if db.get("aiticketresponse"):
+            modal = SimpleTicketModal()
+            await interaction.response.send_modal(modal)
+            return
         await interaction.response.defer()
         thread = await interaction.channel.create_thread(name=f"{interaction.user.name}", type=discord.ChannelType.private_thread, invitable=False)
         await thread.send(f"{interaction.user.mention} Ticket Created! Please share your inquiry, a staff member will respond shortly.")
-        db = load_db(str(interaction.guild.id))
         funny = ""
         if db.get("mod_ticket_pings"):
             for x in db["mod_ticket_pings"]:
@@ -274,6 +261,60 @@ class TicketButton(discord.ui.View):
             await thread.send(funny)
         thread_url = f"https://discord.com/channels/{interaction.guild.id}/{thread.id}"
         await log_ticket(interaction.guild, f"New Ticket! {thread_url}")
+
+class SimpleTicketModal(discord.ui.Modal):
+    def __init__(self):
+        super().__init__(title="Open a Ticket")
+
+        self.input = discord.ui.TextInput(
+            label="Describe your issue",
+            placeholder="Type your issue here...",
+            style=discord.TextStyle.paragraph,
+            max_length=750,
+        )
+        self.add_item(self.input)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+        db = load_db(str(interaction.guild.id))
+        issue_description = self.input.value
+        prompt = db.get("aiticketprompt", "You are requested to respond to a query to the best of your abilities, without any additional context. You are a discord moderation bot.")
+        query = f"{prompt}\nRespond to the following Query: {issue_description}\nRemember to keep your response to the Query short. You cannot ask for further inquiry. If you cannot answer, politely tell the user to create a Ticket."
+        response = await query_ollama(query)
+        embed = discord.Embed(
+            color=discord.Color.from_str("#757e8a"),
+            description=f"{response}\n\n**Did that solve the issue? If not, you can open a ticket to chat with our staff team.**"
+        )
+        qembed = discord.Embed(
+            color=discord.Color.from_str("#757e8a"),
+            description=issue_description
+        )
+        view = FollowupButtons(embed=embed, qembed=qembed)  # Create the buttons view
+        await interaction.followup.send(embed=embed, ephemeral=True, view=view)
+
+class FollowupButtons(discord.ui.View):
+    def __init__(self, embed: discord.Embed, qembed: discord.Embed):
+        super().__init__(timeout=180)  # Optional timeout
+        self.embed = embed
+        self.qembed = qembed
+
+    @discord.ui.button(label="Issue was resolved", style=discord.ButtonStyle.secondary)
+    async def no_thanks(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.edit_message(content="Glad I could help!", embed=None, view=None)
+
+    @discord.ui.button(label="Continue to open ticket", style=discord.ButtonStyle.primary)
+    async def open_ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.edit_message(content=f"{interaction.user.mention} Ticket Created! Please share your inquiry, a staff member will respond shortly.", embed=None, view=None)
+        thread = await interaction.channel.create_thread(name=f"{interaction.user.name}", type=discord.ChannelType.private_thread, invitable=False)
+        await thread.send(f"{interaction.user.mention} Ticket Created! Please share your inquiry, a staff member will respond shortly.", embed=self.qembed)
+        funny = ""
+        db = load_db(str(interaction.guild.id))
+        if db.get("mod_ticket_pings"):
+            for x in db["mod_ticket_pings"]:
+                funny = funny + f"<@{x}> "
+            await thread.send(funny)
+        thread_url = f"https://discord.com/channels/{interaction.guild.id}/{thread.id}"
+        await log_ticket(interaction.guild, f"New Ticket! {thread_url}", embeds=[self.qembed, self.embed])
 
 @bot.event
 async def on_ready():
@@ -337,7 +378,7 @@ async def ping(ctx: commands.Context):
     except Exception as e:
         await ctx.channel.send(f"500 internal server error\n-# {e}")
 
-@tree.command(name="modlogs", description="socimar credit in mar developmente!!")
+@tree.command(name="modlogs", description="social credit")
 @discord.app_commands.default_permissions(view_audit_log=True)
 async def modlogs(ctx: commands.Context, user: discord.User, amount: int = 10):
     memberId = str(user.id)
@@ -379,7 +420,7 @@ async def modlogs(ctx: commands.Context, user: discord.User, amount: int = 10):
 async def info(ctx: commands.Context):
     embed = discord.Embed(
         title=f"{emojis['neocat_police']} About NeoCat Police",
-        description="`NeoCat Police` is a clone of @milenakos' 'Cat police' bot, specifically for Cat Stand. Both bots function very similarly, but with some changes, such as NeoCat Police lacking Cat Bot statistics commands, not being hard coded for Cat Stand, and adding a few more features. NeoCat Police was inspired by tema5002's Cat Bot clone called `ctqa bto`, a clone of Cat Bot that is no longer around. \n\nthanks to morky for assistance with message logs\nthanks to lia for making Cat Police and providing code snippets and AI prompts",
+        description="`NeoCat Police` is a reimplementation of @milenakos' 'Cat police' bot, specifically for Cat Stand. Both bots function very similarly, but with some changes, such as NeoCat Police lacking Cat Bot statistics commands, not being hard coded for Cat Stand, and adding a few more features. NeoCat Police's existance was inspired by tema5002's Cat Bot clone called `ctqa bto`, a clone of Cat Bot. \n\nthanks to morky for assistance with message logs\nthanks to lia for making Cat Police and providing code snippets and AI prompts",
         color=discord.Color.blue()
     )
     embed.set_footer(text=f"NeoCat Police {ver}")
@@ -390,7 +431,7 @@ async def info(ctx: commands.Context):
 
 @tree.command(name="tip", description="unexpected tip")
 async def info(ctx: commands.Context):
-    tips = ["NeoCat Police was developed with the help of stella showing me the commands", "this bot is inspired by tema5002's ctqa bto", "this bot allows for your server having its own yapping city", "this bot is made of 50% ai slop", "i eat sand", "this bot has its own AI that is sometimes offline", "bird used to have moderation commands, but they sucked.", "unlike real cat police, NeoCat Police can be used in your own servers.", "this bot allows for an unlimited amount of starboards", "NeoCat Police is made in python using discord.py", "mari2 created NeoCat Police", "NeoCat Police has message logging", "yapping cities in NeoCat Police actually send the author messages to DMs, unlike yapper", "hungry bot+ is based on actual hungry bot code", "this bot caused catboard to shut down :sob:", "speaking about the previous tip, /leaderboard was pulled from catboard", "quine is a song made by kvellc from another timeline", "this bot has many removed Cat Police features", "you can roll up to 20 dices at once", "bot source code available on github at https://github.com/kbity/neocat-police", "AI memories are stored globally", "this bot has its print and eval functions shadowed", "you can change this bot's avatar with /changeavatar"]
+    tips = ["NeoCat Police was developed with the help of stella showing me the commands", "this bot is inspired by tema5002's ctqa bto", "this bot allows for your server having its own yapping city", "this bot is made of 30% ai slop", "i eat sand", "this bot has its own AI that is sometimes offline", "bird used to have moderation commands, but they sucked.", "unlike real cat police, NeoCat Police can be used in your own servers.", "this bot allows for an unlimited amount of starboards", "NeoCat Police is made in python using discord.py", "mari2 created NeoCat Police", "NeoCat Police has message logging", "yapping cities in NeoCat Police actually send the author messages to DMs, unlike yapper", "hungry bot+ is based on actual hungry bot code", "this bot caused catboard to shut down :sob:", "speaking about the previous tip, /leaderboard was pulled from catboard", "quine is a song made by kvellc from another timeline", "this bot has many removed Cat Police features", "you can roll up to 100 dice with 1000 sides at once", "this bot's messy source code available on github at https://github.com/kbity/neocat-police", "AI memories are stored per server, not globally", "this bot has its print and eval functions shadowed", "you can change this bot's avatar with /changeavatar", "this bot also has /base64-encode and /base64-decode built in!", "AI can be disabled per channel, globally, and can be restricted to a specific role"]
     try:
         await ctx.response.send_message(emojis["tips"]+" "+random.choice(tips))
     except Exception as e:
@@ -414,16 +455,16 @@ async def info(ctx: commands.Context, text: str):
         await ctx.channel.send(f"500 internal server error\n-# {e}")
 
 @tree.command(name="dice", description="roles an amount of dices with sides")
-@app_commands.describe(sides="d1 to d100", count="1 to 20 dice")
+@app_commands.describe(sides="d1 to d1000", count="1 to 100 dice")
 async def info(ctx: commands.Context, sides: int = 6, count: int = 1):
     try:
         if count < 1:
             await ctx.response.send_message(f"{emojis['neocat_cry']} you have **0** dice")
             return
-        if count > 20:
+        if count > 100:
             await ctx.response.send_message(f"{emojis['normal']} you try to roll the dice but **they scatter all over the place and you dont know what the fuck you're doing**")
             return
-        if (sides > 100) or sides == 0:
+        if (sides > 1000) or sides == 0:
             c = ""
             if count > 1:
                 c = "c"
@@ -447,6 +488,23 @@ async def info(ctx: commands.Context, sides: int = 6, count: int = 1):
             for die in range(count):
                 diec.append(random.randint(1, sides))
             await ctx.response.send_message(f"🎲 your d{sides} dice have rolled {diec} for a total of **{sum(diec)}**")
+    except Exception as e:
+        await ctx.channel.send(f"500 internal server error\n-# {e}")
+
+@tree.command(name="base64-decode", description="decode base64")
+@app_commands.describe(string="text")
+async def unb64(ctx: commands.Context, string: str):
+    try:
+        await ctx.response.send_message(f"decoded:\n`{base64.b64decode(string+'==').decode('utf-8')}`")
+    except Exception as e:
+        await ctx.channel.send(f"500 internal server error\n-# {e}")
+
+@tree.command(name="base64-encode", description="undecode base64")
+@app_commands.describe(string="text")
+async def b64(ctx: commands.Context, string: str):
+    try:
+        byte = base64.b64encode(bytes(string, 'utf-8')) # bytes
+        await ctx.response.send_message(f"encoded:\n`{byte.decode('utf-8')}`")
     except Exception as e:
         await ctx.channel.send(f"500 internal server error\n-# {e}")
 
@@ -590,7 +648,7 @@ async def ban(ctx: commands.Context, user: discord.User, reason: str = "None", a
             await interaction.response.edit_message(content="cant :skull:", view=None)
             return
         modlog(guild_id, str(user.id), ctx.user.id, reason, "ban")
-        await log_action(ctx.guild, f"{user.mention} was permanently banned by {ctx.user.mention} for `{reason}` with{out} appeal..")
+        await log_action(ctx.guild, f"{user.mention} was permanently banned by {ctx.user.mention} for `{reason}` with{out} appeal.")
         await interaction.response.edit_message(
             content=f"{user.mention} was permanently banned by {ctx.user.mention} for `{reason}`.",
             view=None,
@@ -962,6 +1020,80 @@ async def kick_error(ctx, error):
     if isinstance(error, commands.CheckFailure):
         await ctx.response.send_message("403 forbidden", ephemeral=True)
 
+@tree.command(name="reason", description="changes a reason")
+@discord.app_commands.default_permissions(moderate_members=True)
+@app_commands.describe(messageid="action log entry id or URL")
+@app_commands.describe(newreason="idi nahui")
+async def modlogs(ctx: commands.Context, messageid: str, newreason: str):
+    try:
+        await ctx.response.defer()
+        if "discord.com" in messageid:
+            messageId = messageid.rsplit("/", 1)[-1]
+        else:
+            messageId = messageid
+        db = load_db(ctx.guild.id)
+        channel_id = db.get("action_log_channel")
+        if channel_id is None:
+            return ctx.followup.send("is not possible")
+        logchannel = bot.get_channel(channel_id)
+        try:
+            message = await logchannel.fetch_message(messageId)
+        except Exception:
+            return await ctx.followup.send("couldn't get message")
+        things = ["purged", "warned", "banned", "mod", "muted", "kicked"]
+        if not any(things in message.content for things in things):
+            return await ctx.followup.send("not an action")
+
+        oldreason = re.findall(r"`([^`]*)`", message.content)[0]
+        mentions = re.findall(r"<@(\d+)>", message.content)
+
+        first_bt = message.content.find("`")
+        last_bt = message.content.rfind("`")
+
+        before = message.content[:first_bt]
+        after = message.content[last_bt+1:]
+
+        await message.edit(content=f"{before}`{newreason}`{after}")
+        mlstatus = "\n -# failed to update modlogs"
+        if not "mod" in message.content and not len(mentions) != 2:
+            logs = load_logs(ctx.guild.id)
+            logee = mentions[0]
+            logger = mentions[1]
+            check = logs[logee]["punishments"]
+            if "unmuted" in message.content:
+                actioni = "unmute"
+            elif "muted" in message.content:
+                actioni = "mute"
+            elif "unbanned" in message.content:
+                actioni = "unban"
+            elif "banned" in message.content:
+                actioni = "ban"
+            elif "kicked" in message.content:
+                actioni = "kick"
+            elif "purged" in message.content:
+                actioni = "purge"
+            elif "warned" in message.content:
+                actioni = "warn"
+            for action in check:
+                ind = check.index(action)
+                #debug
+                console_log(logs[logee]["punishments"][ind][0])
+                console_log(logger)
+                console_log(logs[logee]["punishments"][ind][1])
+                console_log(oldreason)
+                console_log(logs[logee]["punishments"][ind][2])
+                console_log(actioni)
+
+                if str(logs[logee]["punishments"][ind][0]) == logger and logs[logee]["punishments"][ind][1] == oldreason and logs[logee]["punishments"][ind][2] == actioni:
+                    logs[logee]["punishments"][ind][1] = newreason
+                    mlstatus = "\n -# updated modlogs!"
+                    break
+            save_logs(ctx.guild.id, logs)
+        await ctx.followup.send(f"ok{mlstatus}")
+    except Exception as e:
+        await ctx.channel.send(f"500 internal server error\n-# {e}")
+
+
 @tree.command(name="warn", description="uh oh")
 @discord.app_commands.default_permissions(moderate_members=True)
 @app_commands.describe(user="THIS IS A WARNING")
@@ -1200,14 +1332,14 @@ async def log_spammy(guild: discord.Guild, content: str):
         channel = guild.get_channel(channel_id)
         if channel:
             await channel.send(content, allowed_mentions=discord.AllowedMentions.none())
-async def log_ticket(guild: discord.Guild, content: str):
+async def log_ticket(guild: discord.Guild, content: str, embeds: list = None):
     guild_id = str(guild.id)
     db = load_db(guild_id)
     channel_id = db.get("ticket_log_channel")
     if channel_id:
         channel = guild.get_channel(channel_id)
         if channel:
-            await channel.send(content, allowed_mentions=discord.AllowedMentions.none())
+            await channel.send(content, allowed_mentions=discord.AllowedMentions.none(), embeds=embeds)
 
 @tree.command(name="configure", description="you dont learn this in UX this bad in class")
 @commands.has_permissions(manage_guild=True)
@@ -1216,11 +1348,11 @@ async def log_ticket(guild: discord.Guild, content: str):
 @app_commands.describe(bowleen="true or false")
 @app_commands.describe(stirng="WORDS!!")
 @app_commands.describe(integir="m a t h")
-async def configure(ctx: commands.Context, proporty: Literal["disableFreakouts", "disableAI", "disableUnyap", "DCTimeout", "DCTimeout_Bird", "DCRuleNumber", "appeal_message", "ai_automod_prompt"], bowleen: bool = True, stirng: str = "Default", integir: int = 0):
+async def configure(ctx: commands.Context, proporty: Literal["disableFreakouts", "disableAI", "disableUnyap", "DCTimeout", "DCTimeout_Bird", "DCRuleNumber", "appeal_message", "ai_automod_prompt", "antispam", "aiticketresponse", "aiticketprompt"], bowleen: bool = True, stirng: str = "Default", integir: int = 0):
     try:
         await ctx.response.defer(ephemeral=False)
-        boolprops = ["disableFreakouts", "disableAI", "disableUnyap"]
-        strprops = ["appeal_message", "ai_automod_prompt"]
+        boolprops = ["disableFreakouts", "disableAI", "disableUnyap", "antispam", "aiticketresponse"]
+        strprops = ["appeal_message", "ai_automod_prompt", "aiticketprompt"]
         intprops = ["DCTimeout", "DCTimeout_Bird", "DCRuleNumber"]
 
         guild_id = str(ctx.guild.id)
@@ -1255,6 +1387,10 @@ async def on_message_delete(message: discord.Message):
     guild_id = str(message.guild.id)
     db = load_db(guild_id)
     if isinstance(channel, discord.Thread):
+        channel_id = db.get("spammy_log_channel")
+        if channel_id is None:
+            channel_id = db.get("message_log_channel")
+    elif db.get("spammy", {}).get(str(message.channel.id)):
         channel_id = db.get("spammy_log_channel")
         if channel_id is None:
             channel_id = db.get("message_log_channel")
@@ -1309,7 +1445,12 @@ async def on_message_edit(before: discord.Message, message: discord.Message):
 
     guild_id = str(before.guild.id)
     db = load_db(guild_id)
-    channel_id = db.get("message_log_channel")
+    if db.get("spammy", {}).get(str(message.channel.id)):
+        channel_id = db.get("spammy_log_channel")
+        if channel_id is None:
+            channel_id = db.get("message_log_channel")
+    else:
+        channel_id = db.get("message_log_channel")
 
     if channel_id:
         channel = before.guild.get_channel(channel_id)
@@ -1365,60 +1506,50 @@ the message is {message.content}"""
 @bot.tree.command(name="starboard", description="where good messages go")
 @commands.has_permissions(manage_guild=True)
 @discord.app_commands.default_permissions(manage_guild=True)
-@app_commands.describe(channel="WHAT !")
-@app_commands.describe(emoji=":syating_ctqa:")
-@app_commands.describe(threshold="how many people need to care, 0 to delete")
-@app_commands.describe(starboard_id="ID for this starboard (1 = default)")
-@app_commands.describe(enable_leaderboard="enable /leaderboard (only works for starboard 1)")
-async def setstarboard(
-    interaction: discord.Interaction,
-    channel: discord.TextChannel,
-    emoji: str = "⭐",
-    threshold: int = 3,
-    starboard_id: int = 1,
-    enable_leaderboard: truefalse = "no"
-):
-    await interaction.response.defer(ephemeral=False)
+@app_commands.describe(channel="WHAT !", emoji=":syating_ctqa:", threshold="how many people need to care, 0 to delete", starboard_id="ID for this starboard (1 = default)", enable_leaderboard="enable /leaderboard (only works for starboard 1)")
+async def setstarboard(interaction: discord.Interaction, channel: discord.TextChannel, emoji: str = "⭐", threshold: int = 3, starboard_id: int = 1, enable_leaderboard: truefalse = "no"):
+    try:
+        await interaction.response.defer(ephemeral=False)
 
-    server_id = str(interaction.guild.id)
-    db = load_db(server_id)
+        server_id = str(interaction.guild.id)
+        db = load_db(server_id)
 
-    suffix = "" if starboard_id == 1 else f"_{starboard_id}"
+        suffix = "" if starboard_id == 1 else f"_{starboard_id}"
 
-    lb = ""
-    db.setdefault("leaderboardEnabled", "False")
+        lb = ""
+        db.setdefault("leaderboardEnabled", "False")
 
-    changed_emoji = True
-    if 'starboard_emoji' in db and db['starboard_emoji'] == emoji:
-        changed_emoji = False
-    if changed_emoji == True and starboard_id == 1:
-        db["leaderboard"] = {}
+        changed_emoji = True
+        if 'starboard_emoji' in db and db['starboard_emoji'] == emoji:
+            changed_emoji = False
+        if changed_emoji == True and starboard_id == 1:
+            db["leaderboard"] = {}
 
-    if enable_leaderboard == "yes" and db["leaderboardEnabled"] == "False":
-        db["leaderboardEnabled"] = "True"
-        lb = " (leaderboard enabled for starboard 1 btw)"
+        if enable_leaderboard == "yes" and db["leaderboardEnabled"] == "False":
+            db["leaderboardEnabled"] = "True"
+            lb = " (leaderboard enabled for starboard 1 btw)"
 
-    if enable_leaderboard == "no" and db["leaderboardEnabled"] == "True":
-        db["leaderboardEnabled"] = "False"
-        lb = " (leaderboard disabled for starboard 1 btw)"
+        if enable_leaderboard == "no" and db["leaderboardEnabled"] == "True":
+            db["leaderboardEnabled"] = "False"
+            lb = " (leaderboard disabled for starboard 1 btw)"
 
-    if threshold <= 0:
-        # Remove this starboard config
-        for key in ["channel_id", "emoji", "threshold", "webhook_url"]:
-            db.pop(f"starboard_{key}{suffix}", None)
+        if threshold <= 0:
+            # Remove this starboard config
+            for key in ["channel_id", "emoji", "threshold", "webhook_url"]:
+                db.pop(f"starboard_{key}{suffix}", None)
+            save_db(server_id, db)
+            await interaction.followup.send(f"❌ Removed starboard {starboard_id}{lb}")
+            return
+
+        # Set this starboard config
+        db[f"starboard_channel_id{suffix}"] = channel.id
+        db[f"starboard_emoji{suffix}"] = emoji
+        db[f"starboard_threshold{suffix}"] = threshold
         save_db(server_id, db)
-        await interaction.followup.send(f"❌ Removed starboard {starboard_id}{lb}")
-        return
 
-    # Set this starboard config
-    db[f"starboard_channel_id{suffix}"] = channel.id
-    db[f"starboard_emoji{suffix}"] = emoji
-    db[f"starboard_threshold{suffix}"] = threshold
-    save_db(server_id, db)
-
-    await interaction.followup.send(
-        f"⭐ Starboard {starboard_id} set to {channel.mention} with emoji {emoji} and threshold {threshold}{lb}."
-    )
+        await interaction.followup.send(f"⭐ Starboard {starboard_id} set to {channel.mention} with emoji {emoji} and threshold {threshold}{lb}.")
+    except Exception as e:
+        await ctx.channel.send(f"500 internal server error\n-# {e}")
 
 @tree.command(name="leaderboard", description="who has the most boarded stars")
 async def leaderboard(ctx: commands.Context):
@@ -1447,10 +1578,6 @@ async def leaderboard(ctx: commands.Context):
         await ctx.response.send_message(embed=embed)
     except Exception as e:
         await ctx.channel.send(f"500 internal server error\n-# {e}")
-
-def get_unicode_emoji_url(emoji: str) -> str:
-    codepoints = '-'.join(f"{ord(c):x}" for c in emoji)
-    return f"https://twemoji.maxcdn.com/v/latest/72x72/{codepoints}.png"
 
 @bot.event
 async def on_raw_reaction_remove(payload):
@@ -1649,15 +1776,20 @@ async def on_raw_reaction_add(payload):
                     db["leaderboard"].setdefault(str(message.author.id), 0)
                     db["leaderboard"][str(message.author.id)] += 1
                     save_db(payload.guild_id, db)
-
-                author_name = f"{message.author.display_name} ({message.author})"[:80]
-                author_name = author_name[:80] if len(author_name) > 80 else author_name
+                
+                if message.webhook_id:
+                    author_name = f"{message.author.display_name}"[:80]
+                else:
+                    author_name = f"{message.author.display_name} ({message.author})"[:80]
                 avatar_url = message.author.display_avatar.url if message.author.display_avatar else None
 
                 if not message.author.bot and not message.webhook_id:
                     embeds = []
                 else:
-                    embeds = message.embeds
+                    if "https://" in message.content:
+                        embeds = []
+                    else:
+                        embeds = message.embeds
 
                 # Jump button
                 jump_url = message.jump_url
@@ -1783,7 +1915,7 @@ async def setmodrole(ctx: commands.Context, role_type: Literal["admin", "mod", "
 @tree.command(name="setchanneltype", description="Set a channel as a type of role (slow catching, dementia, etc) for the bot")
 @discord.app_commands.default_permissions(manage_guild=True)
 @app_commands.describe(channel_type="What kind of role", channel="The channel to set")
-async def setchanneltype(ctx: commands.Context, channel_type: Literal["catching", "catching-birds", "haikus-allowed", "slow_catching", "dementia_chats", "the_ncpol_press", "one-message-go", "nonsence", "evil-dictator-chat", "banner-submissions"], channel: discord.TextChannel, remove: truefalse = "no"):
+async def setchanneltype(ctx: commands.Context, channel_type: Literal["catching", "catching-birds", "haikus-allowed", "slow_catching", "dementia_chats", "the_ncpol_press", "one-message-go", "nonsence", "evil-dictator-chat", "banner-submissions", "no-ai", "spammy"], channel: discord.TextChannel, remove: truefalse = "no"):
     try:
         await ctx.response.defer(ephemeral=False)
     except Exception as e:
@@ -2518,6 +2650,17 @@ async def on_thread_create(thread: discord.Thread):
             starter_message = await thread.fetch_message(thread.id)
             await starter_message.pin()
 
+def remove_blank_lines(s: str) -> str:
+    out = []
+
+    for line in s.splitlines():
+        blank = not line.strip()
+        if blank:
+            continue
+        out.append(line)
+
+    return "\n".join(out)
+
 @bot.event
 async def on_message(message: discord.Message):
     if message.author == bot.user:
@@ -2540,8 +2683,27 @@ cheerio!
     else:
         db = load_db(message.author.id)
 
+    if db.get("antispam"):
+        global spoilerspammedonce
+        spoilerspammedonce.setdefault(str(message.author.id), False)
+        if message.content.count('|') > 400:
+            if not spoilerspammedonce[str(message.author.id)]:
+                spoilerspammedonce[str(message.author.id)] = True
+            else:
+                try:
+                    await message.author.send(f"hello nerd you might have been banned from {message.guild} for `acting Like a scam bot`. you cant appeal this, shouldnt have been stupid")
+                except Exception:
+                    pass
+                await log_spammy(message.guild, f"{message.author.mention} was permanently banned by {bot.user.mention} for `acting Like a scam bot`.")
+                try:
+                    await message.guild.ban(message.author, reason="acting Like a scam bot", delete_message_seconds=(1*3600))
+                except Exception:
+                    await log_spammy(message.guild, f"{message.author.mention} was NOT permanently banned because I lack perms.")
+        else:
+            spoilerspammedonce[str(message.author.id)] = False
+
 # AI LINE STARTS HERE
-    if not ("disableAI" in db and db["disableAI"] == True) and enableAI == True:
+    if enableAI and not (db.get("disableAI") or db.get("no-ai", {}).get(str(message.channel.id))):
         ai_db = load_ai_db()
         ai_db.setdefault("channels", [])
         aichannels = ai_db["channels"]
@@ -2660,45 +2822,28 @@ cheerio!
                             ctblk = f"Past Messages in Channel:\n"
                     memories = ""
                     ai_db.setdefault("Memories", {})
-                    if str(message.author.id) in ai_db["Memories"]:
-                        memories = f"Memories stored for user: {ai_db['Memories'][str(message.author.id)]}"
+                    ai_db["Memories"].setdefault(str(message.author.id), {})
+                    if isinstance(ai_db["Memories"][str(message.author.id)], list):
+                        ai_db["Memories"][str(message.author.id)] = {}
+
+                    if str(message.guild.id) in ai_db["Memories"][str(message.author.id)]:
+                        mems = ""
+                        for mem in ai_db['Memories'][str(message.author.id)][str(message.guild.id)]:
+                            mems += "* "+mem+"\n"
+                        memories = f"Memories stored for user: {mems}"
+
                     if message.guild:
-                        query = f"""
-You are {name}. {prompt}
-
-Context:
-- You are in a Discord server called "{message.guild.name}", owned by "{message.guild.owner}".
-- Current Time in UTC: {datetime.now(timezone.utc)}
-
-Message formatting rules:
-1. Do NOT include mentions (<@###########>) or replies in your messages.
-2. Keep memories short and concise.
-
-Memory system:
-- To save a memory for a user, add exactly this on the **final line**:
-  !remember [text]
-- Do not just say something was stored — always use the `!remember` command itself.
-- `!remember` must always be on a new line by itself.
-- To wipe all memories, add exactly this on the **final line**:
-  danger_wipe_memories
-- Only use the wipe command if the user explicitly asks to wipe all memories.
-
-Here are the user’s current memories:
-{memories}
-
-Additional context:
-{ctblk}{context}
-
-Now respond to this query from {garry}:
-{message.content}
-"""
+                        ctxline = f'Context:\n- You are in a Discord server called "{message.guild.name}", owned by "{message.guild.owner}".\n- Current Time in UTC: {datetime.now(timezone.utc)}'
                     else:
-                        query = f"""
+                        ctxline = f"Context:\n- You are in DMs with \"{garry}\".\n- Current Time in UTC: {datetime.now(timezone.utc)}"
+                    if ("delete" in message.content or "wipe" in message.content or "forget" in message.content or "remove" in message.content) and "memories" in message.content:
+                        wipeline = "- To wipe all memories, add exactly this on the **final line**: danger_wipe_memories\n- Only do this if the user explicitly asks you to wipe all memories"
+                    else:
+                        wipeline = ""
+                    query = f"""
 You are {name}. {prompt}
 
-Context:
-- You are in DMs with \"{garry}\".
-- Current Time in UTC: {datetime.now(timezone.utc)}
+{ctxline}
 
 Message formatting rules:
 1. Do NOT include mentions (<@###########>) or replies in your messages.
@@ -2709,11 +2854,10 @@ Memory system:
   !remember [text]
 - Do not just say something was stored — always use the `!remember` command itself.
 - `!remember` must always be at the end of the line
-- To wipe all memories, add exactly this on the **final line**:
-  danger_wipe_memories
-- Only use the wipe command if the user explicitly asks to wipe all memories.
+- Do not copy previous memories
+- Only create 1 memory at a time
+{wipeline}
 
-Here are the user’s current memories:
 {memories}
 
 Additional context:
@@ -2723,16 +2867,17 @@ Now respond to this query from {garry}:
 {message.content}
 """
                     response = await query_ollama(query)
+                    response_cleaned = response.replace("\n!remember", "!remember").replace("\ndanger_wipe_memories", "danger_wipe_memories")
                     response_cleaned = response.replace("!remember", "\n!remember").replace("danger_wipe_memories", "\ndanger_wipe_memories")
-                    ai_db["Memories"].setdefault(str(message.author.id), [])
+                    ai_db["Memories"][str(message.author.id)].setdefault(str(message.guild.id), [])
                     memlog = ""
                     if response_cleaned.split('\n')[-1].startswith("!remember"):
-                        ai_db["Memories"][str(message.author.id)].append(response_cleaned.split('\n')[-1][10:])
+                        ai_db["Memories"][str(message.author.id)][str(message.guild.id)].append(response_cleaned.split('\n')[-1][10:])
                         memlog = f"\n-# 🔮 Saved to memory: {response_cleaned.split('\n')[-1][10:]}"
                         response_cleaned = "\n".join(response_cleaned.split("\n")[:-1])
                         save_ai_db(ai_db)
-                    if response_cleaned.split('\n')[-1] == "danger_wipe_memories":
-                        ai_db["Memories"][str(message.author.id)] = []
+                    elif response_cleaned.split('\n')[-1] == "danger_wipe_memories":
+                        ai_db["Memories"][str(message.author.id)][str(message.guild.id)] = []
                         memlog = "\n-# 😵 Wiped all memories!"
                         response_cleaned = "\n".join(response_cleaned.split("\n")[:-1])
                         save_ai_db(ai_db)
@@ -2742,10 +2887,14 @@ Now respond to this query from {garry}:
                         ailoglength[str(message.channel.id)].append(f"{garry}: {message.content}\n")
                         ailoglength[str(message.channel.id)].append(f"{name}: {trimmed_response}\n")
                     sent = None
+
+                    # remove fuckass empty lines the dumb llm adds sometimes
+                    trimmed_responsex2 = remove_blank_lines(trimmed_response)
+
                     try:
-                        sent = await message.reply(trimmed_response, allowed_mentions=discord.AllowedMentions.none())
+                        sent = await message.reply(trimmed_responsex2, allowed_mentions=discord.AllowedMentions.none())
                     except Exception:
-                        sent = await message.channel.send(trimmed_response, allowed_mentions=discord.AllowedMentions.none())
+                        sent = await message.channel.send(trimmed_responsex2, allowed_mentions=discord.AllowedMentions.none())
                     if currentchain is not None:
                         reply_chain_cache[currentchain]["Content"] = reply_chain_cache[currentchain]["Content"] + f"{name}: {trimmed_response}\n"
                         reply_chain_cache[currentchain]["IDs"].append(sent.id)
@@ -2803,7 +2952,6 @@ Now respond to this query from {garry}:
     if message.guild is None:
         return
 
-    global rainstreaks
     global afkusers
     global usernameCache
     global catchesInChannels
@@ -2917,27 +3065,6 @@ Now respond to this query from {garry}:
         db["tags"].pop(tag, None)
         await message.reply("assuming that tag existed it got deleted")
         save_db(message.guild.id, db)
-
-    # rain stuffe
-
-    rainstreaks.setdefault(message.channel.id, 0)
-    isarainmsg = 0
-    if "cat rain has ended" in message.content.lower():
-        isarainmsg = 1
-    sentbycatbot = 0
-    if message.author.name == "Cat Bot" and message.author.bot:
-        sentbycatbot = 1
-    if isarainmsg and sentbycatbot:
-        rainstreaks[message.channel.id] = rainstreaks[message.channel.id] + 1
-        if rainstreaks[message.channel.id] == 3:
-            perms = message.channel.overwrites_for(message.guild.default_role)
-            perms.send_messages=False
-            await message.channel.set_permissions(message.guild.default_role, overwrite=perms)
-            await message.channel.send(f":lock: {message.channel.mention} has been locked by {bot.user.mention} for 3 seconds.")
-            await asyncio.sleep(3)
-            perms.send_messages=True
-            await message.channel.set_permissions(message.guild.default_role, overwrite=perms)
-            rainstreaks[message.channel.id] = 0
 
     # unyappering
     if len(message.attachments) == 1 and not ("disableUnyap" in db and db["disableUnyap"] == True):
@@ -3284,7 +3411,10 @@ Now respond to this query from {garry}:
             if discord.utils.get(message.author.roles, id=int(underage_role)):
                 if not message.type == discord.MessageType.new_member:
                     await message.delete()
-                    await message.author.send(f"hello nerd you might have been banned from {message.guild.name} for `Picked <13 in onboarding`. you cant appeal this, shouldnt have been stupid")
+                    try:
+                        await message.author.send(f"hello nerd you might have been banned from {message.guild.name} for `Picked <13 in onboarding`. you cant appeal this, shouldnt have been stupid")
+                    except Exception:
+                        pass
                     await log_spammy(message.guild, f"{message.author.mention} was permanently banned by {bot.user.mention} for `Picked <13 in onboarding`.")
                     await message.guild.ban(message.author, reason="Picked <13 in onboarding", delete_message_seconds=60)
                     return
@@ -3320,11 +3450,14 @@ Now respond to this query from {garry}:
 Things you like are: Cats, Moderator Appreciating, Orwellianism, extremely strict things, being aroace, math and algebra, cat sounds such as meow, miau, mrrp, nya, and related things like uwu and :3, praise to NeoCat Police
 Things you dislike are: Dogs, birds, Moderator hate, liberalism, relaxed moderation, freedom, not being aroace, any form of bigotry, the LIGHT and the DARK, critizism to NeoCat Police
 the message is {message.content}"""
-        response = await query_ollama(query)
-        if response.lower()[:4] == 'keep':
-            await message.add_reaction(emojis['cat_thumbs'])
-        else:
+        if message.attachments:
             await message.delete()
+        else:
+            response = await query_ollama(query)
+            if response.lower()[:4] == 'keep':
+                await message.add_reaction(emojis['cat_thumbs'])
+            else:
+                await message.delete()
 
     global bannersubmissions
     # Check if it's a banner submissions channel
