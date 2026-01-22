@@ -3618,7 +3618,7 @@ Original message:
 async def print(ctx, *, prompt: str):
     if ctx.author.id == evaluser:
         try:
-            await message.reply(eval(text[9:]))
+            await message.reply(evil(text[9:]))
         except Exception:
             try:
                 await message.reply(traceback.format_exc())
