@@ -71,7 +71,7 @@ default_join_messages = [
 ]
 
 TICKET_BUTTON_PREFIX = "ticket_button_wow_yay:"
-ver = "v1.3.7.1"
+ver = "v1.3.7.2"
 defaultstatus = "NeoCat Police "+ver
 if "status" in cfg:
     defaultstatus = cfg["status"]
@@ -323,7 +323,7 @@ async def on_ready():
 
     bot.session = aiohttp.ClientSession()
     await bot.tree.sync()
-    print("yiur bto is runnign :3")
+    print(f"yiur bto is runnign :3 ({bot.user})")
     ratelimit_tick.start()
     slowcatching_tick.start()
 
@@ -1525,7 +1525,7 @@ the message is {message.content}"""
                     print(e)
 
 
-@bot.tree.command(name="starboard", description="where good messages go")
+@bot.tree.command(name="emojiboard", description="where good messages go")
 @commands.has_permissions(manage_guild=True)
 @discord.app_commands.default_permissions(manage_guild=True)
 @app_commands.describe(channel="WHAT !", emoji=":syating_ctqa:", threshold="how many people need to care, 0 to delete", starboard_id="ID for this starboard (1 = default)", enable_leaderboard="enable /leaderboard (only works for starboard 1)")
@@ -1557,11 +1557,11 @@ async def setstarboard(interaction: discord.Interaction, channel: discord.TextCh
                 db["leaderboardEnabled"] = "False"
                 lb = " (leaderboard disabled for starboard 1 btw)"
 
-            if threshold <= 0:
-                db.pop(db["starboards"][str(starboard_id)], None)
-                save_db(server_id, db)
-                await interaction.followup.send(f"❌ Removed starboard {starboard_id}{lb}")
-                return
+        if threshold <= 0:
+            db.pop(db["starboards"][str(starboard_id)], None)
+            save_db(server_id, db)
+            await interaction.followup.send(f"❌ Removed starboard {starboard_id}{lb}")
+            return
 
         # Set this starboard config
         db["starboards"][str(starboard_id)]["channel"] = channel.id
@@ -1573,7 +1573,32 @@ async def setstarboard(interaction: discord.Interaction, channel: discord.TextCh
     except Exception as e:
         await ctx.channel.send(f"500 internal server error\n-# {e}")
 
-@tree.command(name="leaderboard", description="who has the most boarded stars")
+@bot.tree.command(name="list-emojiboards", description="get a list of all emojiboards")
+@commands.has_permissions(manage_guild=True)
+@discord.app_commands.default_permissions(manage_guild=True)
+async def setstarboard(interaction: discord.Interaction):
+    try:
+        await interaction.response.defer(ephemeral=False)
+
+        server_id = str(interaction.guild.id)
+        db = load_db(server_id)
+        db.setdefault("starboards", {})
+
+        starboards = ""
+        for key in db["starboards"]:
+            starboards += f"**Starboard {key}**:\n* <#{db['starboards'][key]['channel']}> - {db['starboards'][key]['emoji']} ({db['starboards'][key]['threshold']})"
+
+        embed = discord.Embed(
+            title=f'Emojiboards in {interaction.guild}',
+            color=discord.Color.blue(),
+            description=starboards
+        )
+
+        await interaction.followup.send(embed=embed)
+    except Exception as e:
+        await ctx.channel.send(f"500 internal server error\n-# {e}")
+
+@tree.command(name="leaderboard", description="who has the most boarded emojis")
 async def leaderboard(ctx: commands.Context):
     try:
         await ctx.response.defer()
@@ -2762,7 +2787,7 @@ cheerio!
                 if discord.utils.get(message.author.roles, id=int(ai_role)):
                     ai_access = True
         
-        if message.author.id in ai_db["VIPs"]:
+        if "VIPs" in ai_db and message.author.id in ai_db["VIPs"]:
             ai_ratelimited = False
         else:
             ai_ratelimited = True
