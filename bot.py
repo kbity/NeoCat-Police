@@ -71,7 +71,7 @@ default_join_messages = [
 ]
 
 TICKET_BUTTON_PREFIX = "ticket_button_wow_yay:"
-ver = "v1.3.7.3"
+ver = "v1.3.7.4"
 defaultstatus = "NeoCat Police "+ver
 if "status" in cfg:
     defaultstatus = cfg["status"]
@@ -1584,7 +1584,8 @@ async def setstarboard(interaction: discord.Interaction):
 
         starboards = ""
         for key in db["starboards"]:
-            starboards += f"**Starboard {key}**:\n* <#{db['starboards'][key]['channel']}> - {db['starboards'][key]['emoji']} ({db['starboards'][key]['threshold']})\n"
+            if 'channel' in db['starboards'][key] and if 'emoji' in db['starboards'][key] and if 'threshold' in db['starboards'][key]:
+                starboards += f"**Emojiboard {key}**:\n* <#{db['starboards'][key]['channel']}> - {db['starboards'][key]['emoji']} ({db['starboards'][key]['threshold']})\n"
 
         embed = discord.Embed(
             title=f'Emojiboards in {interaction.guild}',
