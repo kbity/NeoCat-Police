@@ -70,15 +70,12 @@ default_join_messages = [
     ["", " joined the party."]
 ]
 
-console_log = print # DO YOU SPEAK JAVASCRIPT??
-evil = eval
-
 TICKET_BUTTON_PREFIX = "ticket_button_wow_yay:"
-ver = "v1.3.7"
+ver = "v1.3.7.1"
 defaultstatus = "NeoCat Police "+ver
 if "status" in cfg:
     defaultstatus = cfg["status"]
-console_log("preparing...")
+print("preparing...")
 
 # make folders
 os.makedirs("data", exist_ok=True)
@@ -240,7 +237,7 @@ async def query_ollama(prompt):
                             pass
                 return full_response
     except Exception as e:
-        console_log(e)
+        print(e)
         return "AI Unavailable"
 
 class TicketButton(discord.ui.View):
@@ -322,11 +319,11 @@ class FollowupButtons(discord.ui.View):
 @bot.event
 async def on_ready():
     bot.add_view(TicketButton())
-    console_log("Registered TicketButton.")
+    print("Registered TicketButton.")
 
     bot.session = aiohttp.ClientSession()
     await bot.tree.sync()
-    console_log("yiur bto is runnign :3")
+    print("yiur bto is runnign :3")
     ratelimit_tick.start()
     slowcatching_tick.start()
 
@@ -343,7 +340,7 @@ async def on_ready():
             with open(file_path, "r") as f:
                 guild_data = json.load(f)
         except Exception as e:
-            console_log(f"Failed to load {filename}: {e}")
+            print(f"Failed to load {filename}: {e}")
             continue
 
         slow_catching = guild_data.get("slow_catching", {})
@@ -368,11 +365,11 @@ async def on_ready():
                     perms.send_messages = True
                     await channel.set_permissions(guild.default_role, overwrite=perms)
                     await channel.send("Bot restart, channel unlocked.")
-                    console_log(f"Unlocked channel {channel.name} in guild {guild.name}")
+                    print(f"Unlocked channel {channel.name} in guild {guild.name}")
             except Exception as e:
-                console_log(f"Failed to unlock {channel_id} in {guild.name}: {e}")
+                print(f"Failed to unlock {channel_id} in {guild.name}: {e}")
 
-    console_log("all slow catching channels unlocked")
+    print("all slow catching channels unlocked")
     await bot.change_presence(activity=discord.CustomActivity(name=defaultstatus))
 
 @tree.command(name="ping", description="tests roundtrip latency")
@@ -424,7 +421,7 @@ async def modlogs(ctx: commands.Context, user: discord.User, amount: int = 10):
 async def info(ctx: commands.Context):
     embed = discord.Embed(
         title=f"{emojis['neocat_police']} About NeoCat Police",
-        description="**`NeoCat Police`** is a reimplementation of @milenakos' \"Cat police\" bot, specifically for Cat Stand. Both bots function very similarly, but with some changes, such as NeoCat Police lacking Cat Bot statistics commands, not being hard coded for Cat Stand, and adding a few more features. NeoCat Police's existance was inspired by tema5002's Cat Bot clone called \"ctqa bto\", a clone of Cat Bot. \n\nthanks to morky for assistance with message logs\nthanks to lia for making Cat Police and providing code snippets and AI prompts\nthanks to hexahedron1 for the purge easter egg images",
+        description="**`NeoCat Police`** is a reimplementation of @milenakos' \"Cat police\" bot, specifically for Cat Stand. Both bots function very similarly, but with some changes, such as NeoCat Police lacking Cat Bot statistics commands, not being hard coded for Cat Stand, and adding a few more features. NeoCat Police's existance was inspired by tema5002's Cat Bot clone called \"ctqa bto\", a clone of Cat Bot. \n\nthanks to morky for assistance with message logs\nthanks to lia for making Cat Police and providing code snippets and AI prompts, as well as the print and eval commands\nthanks to hexahedron1 for the purge easter egg images",
         color=discord.Color.blue()
     )
     embed.set_footer(text=f"NeoCat Police {ver}")
@@ -579,7 +576,7 @@ async def ban(ctx: commands.Context, user: discord.User, reason: str = "None", a
                     invite = await appeal_guild.text_channels[0].create_invite(max_age=3600, max_uses=1, unique=True, reason="ban appeal link")
                     return f"If you think this was unfair, you can appeal here: {invite.url}"
             except Exception as e:
-                console_log(f"Failed to create appeal invite: {e}")
+                print(f"Failed to create appeal invite: {e}")
         return appeal_info.get("appeal_message", "you can't appeal this ban.")
 
     confirm_button = discord.ui.Button(label="Confirm", style=discord.ButtonStyle.secondary)
@@ -617,7 +614,7 @@ async def ban(ctx: commands.Context, user: discord.User, reason: str = "None", a
                     appeal_message = await get_appeal_message()
                     await user.send(f"hello nerd you might have been banned from {ctx.guild.name} for `{reason}`. {appeal_message}")
                 except Exception as e:
-                    console_log(f"Failed to send DM: {e}")
+                    print(f"Failed to send DM: {e}")
                 try:
                     await approval_interaction.guild.ban(user, reason=reason, delete_message_seconds=(purgetime*3600))
                 except Exception as e:
@@ -644,7 +641,7 @@ async def ban(ctx: commands.Context, user: discord.User, reason: str = "None", a
             appeal_message = await get_appeal_message()
             await user.send(f"hello nerd you might have been banned from {ctx.guild.name} for `{reason}`. {appeal_message}")
         except Exception as e:
-            console_log(f"Failed to send DM: {e}")
+            print(f"Failed to send DM: {e}")
         
         try:
             await interaction.guild.ban(user, reason=reason, delete_message_seconds=(purgetime*3600))
@@ -762,7 +759,7 @@ async def accept(ctx: commands.Context, user: discord.User, reason: str = "None"
             f"join back using {invite.url}"
         )
     except Exception as e:
-        await console_log(f"Failed to DM user: {e}")
+        await print(f"Failed to DM user: {e}")
 
     # Try to unban
     try:
@@ -814,7 +811,7 @@ async def deny(ctx: commands.Context, user: discord.User, reason: str = "None"):
             f"hello your appeal in `{main_guild.name}` was denied tough shit bro\nreason: `{reason}`."
         )
     except Exception as e:
-        await console_log(f"Failed to DM user: {e}")
+        await print(f"Failed to DM user: {e}")
 
     # Kick from appeals
     try:
@@ -869,7 +866,7 @@ async def on_member_join(member: discord.Member):
                 try:
                     await first_text_channel.send(message.content)
                 except Exception as e:
-                    console_log(f"Failed to send appeal context in {member.guild.name}: {e}")
+                    print(f"Failed to send appeal context in {member.guild.name}: {e}")
             break  # Stop after first relevant match
 
 @tree.command(name="kick", description="yeet")
@@ -890,7 +887,7 @@ async def kick(ctx: commands.Context, user: discord.User, reason: str = "None"):
         try:
             await user.send(f"hello nerd you might have been kicked from {ctx.guild.name} for `{reason}`.")
         except Exception as e:
-            console_log(f"Failed to send DM: {e}")
+            print(f"Failed to send DM: {e}")
 
         try:
             await interaction.guild.kick(user, reason=reason)
@@ -996,7 +993,7 @@ async def mute(ctx: commands.Context, user: discord.User, lengh: str, reason: st
         try:
             await user.send(f"hello nerd you were muted in {ctx.guild.name} for `{reason}`. that shit will expire <t:{round(time.time()) + clock}:R>")
         except Exception as e:
-            console_log(f"Failed to send DM: {e}")
+            print(f"Failed to send DM: {e}")
         try:
             await user.timeout(timedelta(seconds=clock), reason=f"{reason}")
         except Exception as e:
@@ -1025,7 +1022,7 @@ async def mute(ctx: commands.Context, user: discord.User, lengh: str, reason: st
         try:
             await user.send(f"hello nerd you were muted in {ctx.guild.name} for `{reason}`. that shit will expire <t:{round(time.time()) + clock}:R>")
         except Exception as e:
-            console_log(f"Failed to send DM: {e}")
+            print(f"Failed to send DM: {e}")
     else:
         try:
             approval_view = discord.ui.View()
@@ -1097,12 +1094,12 @@ async def modlogs(ctx: commands.Context, messageid: str, newreason: str):
             for action in check:
                 ind = check.index(action)
                 #debug
-                console_log(logs[logee]["punishments"][ind][0])
-                console_log(logger)
-                console_log(logs[logee]["punishments"][ind][1])
-                console_log(oldreason)
-                console_log(logs[logee]["punishments"][ind][2])
-                console_log(actioni)
+                print(logs[logee]["punishments"][ind][0])
+                print(logger)
+                print(logs[logee]["punishments"][ind][1])
+                print(oldreason)
+                print(logs[logee]["punishments"][ind][2])
+                print(actioni)
 
                 if str(logs[logee]["punishments"][ind][0]) == logger and logs[logee]["punishments"][ind][1] == oldreason and logs[logee]["punishments"][ind][2] == actioni:
                     logs[logee]["punishments"][ind][1] = newreason
@@ -1136,7 +1133,7 @@ async def warn(ctx: commands.Context, user: discord.User, reason: str = "None"):
     try:
         await user.send(f"hello nerd you were warned in {ctx.guild.name} for `{reason}`\nrepeated offences might result in mutes or bans.")
     except Exception as e:
-        console_log(f"Failed to send DM: {e}")
+        print(f"Failed to send DM: {e}")
 @warn.error
 async def kick_error(ctx, error):
     if isinstance(error, commands.CheckFailure):
@@ -1184,7 +1181,7 @@ async def unmute(ctx: commands.Context, user: discord.User, reason: str = "None"
         try:
             await user.send(f"hello nerd you were unmuted in {ctx.guild.name} for `{reason}`.")
         except Exception as e:
-            console_log(f"Failed to send DM: {e}")
+            print(f"Failed to send DM: {e}")
     except Exception as e:
         await ctx.channel.send(f"500 internal server error\n-# {e}")
 @unmute.error
@@ -1207,7 +1204,7 @@ async def unban(ctx: commands.Context, user: discord.User, reason: str = "None")
     try:
         await user.send(f"hello nerd you were unbanned in {ctx.guild.name} for `{reason}`!!!")
     except Exception as e:
-        console_log(f"couldn't DM user.'\n {e}")
+        print(f"couldn't DM user.'\n {e}")
 
 @ban.error
 async def ban_error(ctx, error):
@@ -1448,7 +1445,7 @@ async def on_message_delete(message: discord.Message):
                                     fp.seek(0)
                                     files.append(discord.File(fp, filename=attachment.filename))
                         except Exception as e:
-                            console_log(f"Failed to download attachment: {attachment.url} — {e}")
+                            print(f"Failed to download attachment: {attachment.url} — {e}")
             hblock = ""
             try:
                 mewhenthemoddeletesmymessage = await anext(message.guild.audit_logs(action=discord.AuditLogAction.message_delete, limit=1))
@@ -1525,7 +1522,7 @@ the message is {message.content}"""
                     await asyncio.sleep(10)
                     await msg.delete()
                 except Exception as e:
-                    console_log(e)
+                    print(e)
 
 
 @bot.tree.command(name="starboard", description="where good messages go")
@@ -1627,7 +1624,7 @@ async def on_raw_reaction_remove(payload):
                 try:
                     await user.remove_roles(mewhenthe_role, reason="EVIL react role :staring_dog:")
                 except Exception as e:
-                    console_log(f"failed to remove react role, {e}")
+                    print(f"failed to remove react role, {e}")
 
     if payload.user_id == bot.user.id:
         db = load_db(payload.guild_id)
@@ -1668,13 +1665,13 @@ async def on_raw_reaction_add(payload):
         try:
             channel = await bot.fetch_channel(payload.channel_id)
         except discord.NotFound:
-            console_log(f"Channel {payload.channel_id} not found.")
+            print(f"Channel {payload.channel_id} not found.")
             return
         except discord.Forbidden:
-            console_log(f"Missing permissions to fetch channel {payload.channel_id}.")
+            print(f"Missing permissions to fetch channel {payload.channel_id}.")
             return
         except discord.HTTPException as e:
-            console_log(f"HTTP error while fetching channel: {e}")
+            print(f"HTTP error while fetching channel: {e}")
             return
     message = await channel.fetch_message(payload.message_id)
     serveremojis = guild.emojis
@@ -1713,7 +1710,7 @@ async def on_raw_reaction_add(payload):
                 try:
                     await user.add_roles(mewhenthe_role, reason="react role :syating_ctqa:")
                 except Exception as e:
-                    console_log(f"failed to add react role, {e}")
+                    print(f"failed to add react role, {e}")
                     return
                 verifyroleFile = db.get("verified_role", None)
                 try:
@@ -1726,7 +1723,7 @@ async def on_raw_reaction_add(payload):
                         try:
                             await user.send(dm_message)
                         except Exception as e:
-                            console_log(f"failed to DM, {e}")
+                            print(f"failed to DM, {e}")
                         if "welcome" in db:
                             if db["welcome"]["mode"] == "OnVerify":
                                 await welcomeUser(guild_id, user.id)
@@ -1746,13 +1743,13 @@ async def on_raw_reaction_add(payload):
             try:
                 channel = await bot.fetch_channel(payload.channel_id)
             except discord.NotFound:
-                console_log(f"Channel {payload.channel_id} not found.")
+                print(f"Channel {payload.channel_id} not found.")
                 continue
             except discord.Forbidden:
-                console_log(f"Missing permissions to fetch channel {payload.channel_id}.")
+                print(f"Missing permissions to fetch channel {payload.channel_id}.")
                 continue
             except discord.HTTPException as e:
-                console_log(f"HTTP error while fetching channel: {e}")
+                print(f"HTTP error while fetching channel: {e}")
                 continue
 
         if payload.emoji.name != emoji and str(payload.emoji) != emoji:
@@ -2072,8 +2069,8 @@ async def setmodrole(ctx: commands.Context, message_id: str, emoji: str, role: d
                 await ctx.followup.send(f"vro that's not an emoji", ephemeral=True)
                 return
         else:
-            console_log(emoji)
-            console_log(contains_symbols(emoji))
+            print(emoji)
+            print(contains_symbols(emoji))
             if contains_symbols(emoji):
                 await ctx.followup.send(f"vro that's not an emoji", ephemeral=True)
                 return
@@ -2202,7 +2199,7 @@ async def setmod(ctx: commands.Context, user: discord.Member, level: Literal["mo
                     db["mod_ticket_pings"].remove(str(user.id))
                     save_db(guild_id, db)
             except Exception as e:
-                console_log(e)
+                print(e)
 
         # Apply changes
         if to_add:
@@ -2224,7 +2221,7 @@ async def setmod(ctx: commands.Context, user: discord.Member, level: Literal["mo
         try:
             await user.send(dm_message)
         except Exception as e:
-            console_log(f"failed to DM, {e}")
+            print(f"failed to DM, {e}")
         await ctx.response.send_message(send_message)
 
     except Exception as e:
@@ -2555,7 +2552,7 @@ async def verify(ctx: commands.Context, user: discord.Member, reason: str = "Non
         try:
             await user.send(dm_message)
         except Exception as e:
-            console_log(f"failed to DM, {e}")
+            print(f"failed to DM, {e}")
         await ctx.response.send_message(send_message)
 
     except Exception as e:
@@ -2954,7 +2951,7 @@ Now respond to this query from {garry}:
                 try:
                     channel = bot.get_channel(db["the_ncpol_press"])
                 except:
-                    console_log("getting channel error fuck you")
+                    print("getting channel error fuck you")
                     return
                 async with channel.typing():
                     messages = [msg async for msg in message.channel.history(limit=20)]
@@ -3430,7 +3427,7 @@ Now respond to this query from {garry}:
 
                 await thread_owner.send(embed=embed, files=files, allowed_mentions=discord.AllowedMentions.none(), view=view)
             except Exception as e:
-                console_log(f"Error deleting message or sending DM: {e}")
+                print(f"Error deleting message or sending DM: {e}")
 
     if not underage_role is None:
         if not message.guild is None:
@@ -3555,7 +3552,7 @@ the message is {message.content}"""
                     await asyncio.sleep(10)
                     await msg.delete()
                 except Exception as e:
-                    console_log(e)
+                    print(e)
 
     # Check if it's a haiku channel
     if db.get("haikus-allowed", {}).get(channel_id):
@@ -3612,61 +3609,60 @@ Original message:
             else:
                 await webhook.send(content="an error of some sort")
 
-    await bot.process_commands(message)
-
-@bot.command(help="(BOT OWNER) basic eval")
-async def print(ctx, *, prompt: str):
-    if ctx.author.id == evaluser:
-        try:
-            await message.reply(evil(text[9:]))
-        except Exception:
+    #just some owner-only/text command things
+    if message.author.id == evaluser:
+        if message.content.lower().startswith(f"{cfg['prefix']}print"):
+            # just a simple one-line with no async (e.g. 2+3)
+            # (c) lia milenakos, this code snippet is provided under the AGPL License https://github.com/milenakos/cat-bot/
+    
             try:
-                await message.reply(traceback.format_exc())
+                await message.reply(eval(message.content[(len(f"{cfg['prefix']}print")):]))
             except Exception:
-                pass
+                try:
+                    await message.reply(traceback.format_exc())
+                except Exception:
+                    pass
 
-@bot.command(help="(BOT OWNER) advanced eval")
-async def eval(ctx, *, prompt: str):
-    # complex eval, multi-line + async support
-    # requires the full `await message.channel.send(2+3)` to get the result
-    # thanks to lia milenakos for this code, under the AGPL License
-    if ctx.author.id == evaluser:
-        spaced = ""
-        for i in prompt.split("\n"):
-            spaced += "  " + i + "\n"
+        if message.content.lower().startswith(f"{cfg['prefix']}eval"):
+            # complex eval, multi-line + async support
+            # requires the full `await message.channel.send(2+3)` to get the result
+            # (c) lia milenakos, this code snippet is provided under the AGPL License https://github.com/milenakos/cat-bot/
+    
+            # async def go():
+            #  <stuff goes here>
+            #
+            # try:
+            #  bot.loop.create_task(go())
+            # except Exception:
+            #  await message.reply(traceback.format_exc())
 
-        intro = (
-            "async def go(prompt, bot, ctx):\n"
-            " try:\n"
-        )
-        ending = (
-            "\n except Exception:\n"
-            "  await ctx.send(traceback.format_exc())"
-            "\nbot.loop.create_task(go(prompt, bot, ctx))"
-        )
+            silly_billy = message.content[(len(f"{cfg['prefix']}eval ")):]
 
-        complete = intro + spaced + ending
-        exec(complete)
+            spaced = ""
+            for i in silly_billy.split("\n"):
+                spaced += "  " + i + "\n"
+    
+            intro = "async def go(message, bot):\n try:\n"
+            ending = "\n except Exception:\n  await message.reply(traceback.format_exc())\nbot.loop.create_task(go(message, bot))"
+    
+            complete = intro + spaced + ending
+            exec(complete)
+    
+        if message.content.lower().startswith(f"{cfg['prefix']}restart"):
+            print("restart has been triggered...")
+            await message.reply("restarting bot...")
+            os.execv(sys.executable, ['python'] + sys.argv)
 
-@bot.command(help="(BOT OWNER) restarts the bot")
-async def restart(ctx):
-    if ctx.author.id == evaluser:
-        console_log("restart has been triggered...")
-        await ctx.send("restarting bot...")
-        os.execv(sys.executable, ['python'] + sys.argv)
+        if message.content.lower().startswith(f"{cfg['prefix']}status"):
+            try:
+                prompt = message.content[(len(f"{cfg['prefix']}status ")):]
+                await bot.change_presence(activity=discord.CustomActivity(name=prompt))
+                await message.reply(f"Status updated to: {prompt}")
+            except Exception as e:
+                await message.reply(str(e))
 
-@bot.command(help="(BOT OWNER) set status")
-async def status(ctx, *, prompt: str):
-    if ctx.author.id == evaluser:
-        try:
-            await bot.change_presence(activity=discord.CustomActivity(name=prompt))
-            await ctx.send(f"Status updated to: {prompt}")
-        except Exception as e:
-            await ctx.send(str(e))
-
-@bot.command(help="checks if bot is alive")
-async def test(ctx):
-    await ctx.send("NeoCat Police isn't down!")
+    if message.content.lower().startswith(f"{cfg['prefix']}test"):
+        await message.reply("NeoCat Police isn't down!")
 
 def syllable_count(word):
     word = word.lower()
@@ -3756,7 +3752,7 @@ async def slowcatching_tick():
                 await channel.set_permissions(message.guild.default_role, overwrite=perms)
                 sleepycatch.pop(ch, None)
             except Exception as e:
-                console_log(e)
+                print(e)
                 sleepycatch[ch]["TTL"] = 10
 
 bot.run(TOKEN)
