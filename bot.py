@@ -1558,9 +1558,9 @@ async def setstarboard(interaction: discord.Interaction, channel: discord.TextCh
                 lb = " (leaderboard disabled for starboard 1 btw)"
 
         if threshold <= 0:
-            db.pop(db["starboards"][str(starboard_id)], None)
+            del db["starboards"][str(starboard_id)]
             save_db(server_id, db)
-            await interaction.followup.send(f"❌ Removed starboard {starboard_id}{lb}")
+            await interaction.followup.send(f"❌ Removed emojiboard {starboard_id}{lb}")
             return
 
         # Set this starboard config
@@ -1571,7 +1571,7 @@ async def setstarboard(interaction: discord.Interaction, channel: discord.TextCh
 
         await interaction.followup.send(f"{emoji} Emojiboard {starboard_id} set to {channel.mention} with emoji {emoji} and threshold {threshold}{lb}.")
     except Exception as e:
-        await ctx.channel.send(f"500 internal server error\n-# {e}")
+        await interaction.channel.send(f"500 internal server error\n-# {e}")
 
 @bot.tree.command(name="list-emojiboards", description="get a list of all emojiboards")
 async def setstarboard(interaction: discord.Interaction):
@@ -1584,7 +1584,7 @@ async def setstarboard(interaction: discord.Interaction):
 
         starboards = ""
         for key in db["starboards"]:
-            starboards += f"**Starboard {key}**:\n* <#{db['starboards'][key]['channel']}> - {db['starboards'][key]['emoji']} ({db['starboards'][key]['threshold']})"
+            starboards += f"**Starboard {key}**:\n* <#{db['starboards'][key]['channel']}> - {db['starboards'][key]['emoji']} ({db['starboards'][key]['threshold']})\n"
 
         embed = discord.Embed(
             title=f'Emojiboards in {interaction.guild}',
@@ -1594,7 +1594,7 @@ async def setstarboard(interaction: discord.Interaction):
 
         await interaction.followup.send(embed=embed)
     except Exception as e:
-        await ctx.channel.send(f"500 internal server error\n-# {e}")
+        await interaction.channel.send(f"500 internal server error\n-# {e}")
 
 @tree.command(name="leaderboard", description="who has the most boarded emojis")
 async def leaderboard(ctx: commands.Context):
