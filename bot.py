@@ -1569,7 +1569,7 @@ async def setstarboard(interaction: discord.Interaction, channel: discord.TextCh
         db["starboards"][str(starboard_id)]["threshold"] = threshold
         save_db(server_id, db)
 
-        await interaction.followup.send(f"⭐ Starboard {starboard_id} set to {channel.mention} with emoji {emoji} and threshold {threshold}{lb}.")
+        await interaction.followup.send(f"{emoji} Emojiboard {starboard_id} set to {channel.mention} with emoji {emoji} and threshold {threshold}{lb}.")
     except Exception as e:
         await ctx.channel.send(f"500 internal server error\n-# {e}")
 
