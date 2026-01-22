@@ -1578,32 +1578,34 @@ async def setstarboard(interaction: discord.Interaction, channel: discord.TextCh
 
 @tree.command(name="leaderboard", description="who has the most boarded stars")
 async def leaderboard(ctx: commands.Context):
-    db.setdefault("starboards", {})
-    db["starboards"].setdefault("1", {})
-    db["starboards"]["1"].setdefault("emoji", "⭐")
-    amount = 10
-    db = load_db(str(ctx.guild.id))
-    if "leaderboard" not in db or not db["leaderboard"]:
-        await ctx.response.send_message(f"no leaderboard {emojis['bwomp']}", ephemeral=True)
-        return
-
-    sortedlb = dict(sorted(db["leaderboard"].items(), key=lambda item: item[1], reverse=True))
-
-    leaderboard = ""
-    counter = 0
-    for member in sortedlb:
-        counter += 1
-        if counter > 10:
-            break
-        leaderboard = leaderboard + f'{counter}. <@{member}>: {db["leaderboard"][member]} {db["starboards"]["1"]["emoji"]}\n'
-
-    embed = discord.Embed(
-        title=f'Top 10 {db["starboards"]["1"]["emoji"]}s:',
-        color=discord.Color.blue(),
-        description=leaderboard
-    )
     try:
-        await ctx.response.send_message(embed=embed)
+        await ctx.response.defer()
+        db = load_db(str(ctx.guild.id))
+        db.setdefault("starboards", {})
+        db["starboards"].setdefault("1", {})
+        db["starboards"]["1"].setdefault("emoji", "⭐")
+        amount = 10
+        if "leaderboard" not in db or not db["leaderboard"]:
+            await ctx.response.send_message(f"no leaderboard {emojis['bwomp']}", ephemeral=True)
+            return
+
+        sortedlb = dict(sorted(db["leaderboard"].items(), key=lambda item: item[1], reverse=True))
+
+        leaderboard = ""
+        counter = 0
+        for member in sortedlb:
+            counter += 1
+            if counter > 10:
+                break
+            leaderboard = leaderboard + f'{counter}. <@{member}>: {db["leaderboard"][member]} {db["starboards"]["1"]["emoji"]}\n'
+
+        embed = discord.Embed(
+            title=f'Top 10 {db["starboards"]["1"]["emoji"]}s:',
+            color=discord.Color.blue(),
+            description=leaderboard
+        )
+
+        await ctx.followup.send(embed=embed)
     except Exception as e:
         await ctx.channel.send(f"500 internal server error\n-# {e}")
 
