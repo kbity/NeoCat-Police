@@ -75,6 +75,9 @@ evil = eval
 
 TICKET_BUTTON_PREFIX = "ticket_button_wow_yay:"
 ver = "v1.3.6"
+defaultstatus = "NeoCat Police "+ver
+if "status" in cfg:
+    defaultstatus = cfg["status"]
 console_log("preparing...")
 
 # make folders
@@ -370,6 +373,7 @@ async def on_ready():
                 console_log(f"Failed to unlock {channel_id} in {guild.name}: {e}")
 
     console_log("all slow catching channels unlocked")
+    await bot.change_presence(activity=discord.CustomActivity(name=defaultstatus))
 
 @tree.command(name="ping", description="tests roundtrip latency")
 async def ping(ctx: commands.Context):
@@ -888,9 +892,13 @@ async def kick(ctx: commands.Context, user: discord.User, reason: str = "None"):
         except Exception as e:
             console_log(f"Failed to send DM: {e}")
 
-        await interaction.guild.kick(user, reason=reason)
+        try:
+            await interaction.guild.kick(user, reason=reason)
+        except Exception as e:
+            await interaction.response.edit_message(content=f"cant :skull:", view=None)
+            return
         modlog(str(ctx.guild.id), str(user.id), ctx.user.id, reason, "kick")
-        await log_action(ctx.guild, f"{user.mention} was kicked by {ctx.user} for `{reason}`.")
+        await log_action(ctx.guild, f"{user.mention} was kicked by {ctx.user.mention} for `{reason}`.")
         await interaction.response.edit_message(content=f"{user.mention} was kicked by {interaction.user.mention} for `{reason}`.", view=None)
 
     # Assign the callback to the button
@@ -950,6 +958,10 @@ async def kick_error(ctx, error):
 @app_commands.describe(lengh="lengh of no yap perms (e.g. 7d)")
 @app_commands.describe(reason="i muted you becuz your annoying")
 async def mute(ctx: commands.Context, user: discord.User, lengh: str, reason: str = "None"):
+    try:
+        await ctx.response.defer()
+    except Exception as e:
+        await ctx.channel.send(f"500 internal server error\n-# {e}")
     guild_id = str(ctx.guild.id)
     db = load_db(guild_id)
     mod_roles = db.get("mod_roles", {})
@@ -985,7 +997,11 @@ async def mute(ctx: commands.Context, user: discord.User, lengh: str, reason: st
             await user.send(f"hello nerd you were muted in {ctx.guild.name} for `{reason}`. that shit will expire <t:{round(time.time()) + clock}:R>")
         except Exception as e:
             console_log(f"Failed to send DM: {e}")
-        await user.timeout(timedelta(seconds=clock), reason=f"{reason}")
+        try:
+            await user.timeout(timedelta(seconds=clock), reason=f"{reason}")
+        except Exception as e:
+            await approval_interaction.response.edit_message(content=f"cant :skull:", view=None)
+            return
         modlog(str(ctx.guild.id), str(user.id), ctx.user.id, reason, "mute", until=clock)
         await log_action(ctx.guild, f"{user.mention} was muted until by {ctx.user.mention} for `{reason}`! This mute expires <t:{round(time.time()) + clock}:R> (confirmed by {approver.mention})")
         await approval_interaction.response.edit_message(
@@ -996,10 +1012,14 @@ async def mute(ctx: commands.Context, user: discord.User, lengh: str, reason: st
 
     if is_minimod:
         try:
-            await user.timeout(timedelta(seconds=clock), reason=f"{reason}")
+            try:
+                await user.timeout(timedelta(seconds=clock), reason=f"{reason}")
+            except Exception as e:
+                await ctx.followup.send(content=f"cant :skull:")
+                return
             modlog(str(ctx.guild.id), str(user.id), ctx.user.id, reason, "mute", until=clock)
             await log_action(ctx.guild, f"{user.mention} was muted by {ctx.user.mention} for `{reason}`! This mute expires <t:{round(time.time()) + clock}:R>")
-            await ctx.response.send_message(f"{user.mention} was muted by {ctx.user.mention} for `{reason}`! This mute expires <t:{round(time.time()) + clock}:R>")
+            await ctx.followup.send(f"{user.mention} was muted by {ctx.user.mention} for `{reason}`! This mute expires <t:{round(time.time()) + clock}:R>")
         except Exception as e:
             await ctx.channel.send(f"500 internal server error\n-# {e}")
         try:
@@ -1012,7 +1032,7 @@ async def mute(ctx: commands.Context, user: discord.User, lengh: str, reason: st
             approve_button = discord.ui.Button(label="Confirm", style=discord.ButtonStyle.secondary)
             approve_button.callback = approve_button_callback
             approval_view.add_item(approve_button)
-            await ctx.response.send_message(f"{ctx.user.mention} is trying to mute {user.mention} for `{reason}`! This mute will expire <t:{round(time.time()) + clock}:R>\nThey need a confirmation from a higher-up staff member.", view=approval_view)
+            await ctx.followup.send(f"{ctx.user.mention} is trying to mute {user.mention} for `{reason}`! This mute will expire <t:{round(time.time()) + clock}:R>\nThey need a confirmation from a higher-up staff member.", view=approval_view)
         except Exception as e:
             await ctx.channel.send(f"500 internal server error\n-# {e}")
 @mute.error
@@ -1125,19 +1145,24 @@ async def kick_error(ctx, error):
 @tree.command(name="nickname", description="change someone's identity (nickname)")
 @discord.app_commands.default_permissions(manage_nicknames=True)
 @app_commands.describe(user="who do you want to rename")
-@app_commands.describe(new_nickname="their new embarrassing identity")
+@app_commands.describe(new_nickname="their new identity")
 async def nickname(ctx: commands.Context, user: discord.Member, new_nickname: str = ""):
-    old_nickname = user.nick if user.nick else "(no nickname)"
     try:
-        await user.edit(nick=new_nickname)
-        if new_nickname == "":
-            await log_action(ctx.guild, f"{ctx.user.mention} reset {user.mention}'s nick from `{old_nickname}`.")
-            await ctx.response.send_message(f"{ctx.user.mention} reset {user.mention}'s nick.")
-        else:
-            await log_action(ctx.guild, f"{ctx.user.mention} renamed {user.mention} from `{old_nickname}` to `{new_nickname}`.")
-            await ctx.response.send_message(f"{ctx.user.mention} renamed {user.mention} to `{new_nickname}`.")
-    except discord.Forbidden:
-        await interaction.response.edit_message("cant :skull:", view=None)
+        await ctx.response.defer()
+        old_nickname = user.nick if user.nick else "(no nickname)"
+        if len(new_nickname) > 32:
+            await ctx.followup.send("nickname is too long")
+            return
+        try:
+            await user.edit(nick=new_nickname)
+            if new_nickname == "":
+                await log_action(ctx.guild, f"{ctx.user.mention} reset {user.mention}'s nick from `{old_nickname}`.")
+                await ctx.followup.send(f"{ctx.user.mention} reset {user.mention}'s nick.")
+            else:
+                await log_action(ctx.guild, f"{ctx.user.mention} renamed {user.mention} from `{old_nickname}` to `{new_nickname}`.")
+                await ctx.followup.send(f"{ctx.user.mention} renamed {user.mention} to `{new_nickname}`.")
+        except Exception:
+            await ctx.followup.send("cant :skull:")
     except Exception as e:
         await ctx.channel.send(f"500 internal server error\n-# {e}")
 
@@ -1507,44 +1532,44 @@ the message is {message.content}"""
 @commands.has_permissions(manage_guild=True)
 @discord.app_commands.default_permissions(manage_guild=True)
 @app_commands.describe(channel="WHAT !", emoji=":syating_ctqa:", threshold="how many people need to care, 0 to delete", starboard_id="ID for this starboard (1 = default)", enable_leaderboard="enable /leaderboard (only works for starboard 1)")
-async def setstarboard(interaction: discord.Interaction, channel: discord.TextChannel, emoji: str = "⭐", threshold: int = 3, starboard_id: int = 1, enable_leaderboard: truefalse = "no"):
+async def setstarboard(interaction: discord.Interaction, channel: discord.TextChannel, emoji: str = "⭐", threshold: int = 3, starboard_id: int = 1, enable_leaderboard: bool = None):
     try:
         await interaction.response.defer(ephemeral=False)
 
         server_id = str(interaction.guild.id)
         db = load_db(server_id)
-
-        suffix = "" if starboard_id == 1 else f"_{starboard_id}"
+        db.setdefault("starboards", {})
+        db["starboards"][str(starboard_id)] = {}
 
         lb = ""
         db.setdefault("leaderboardEnabled", "False")
 
         changed_emoji = True
-        if 'starboard_emoji' in db and db['starboard_emoji'] == emoji:
+        if 'emoji' in db["starboards"][str(starboard_id)] and db["starboards"][str(starboard_id)] == emoji:
             changed_emoji = False
+
         if changed_emoji == True and starboard_id == 1:
             db["leaderboard"] = {}
 
-        if enable_leaderboard == "yes" and db["leaderboardEnabled"] == "False":
-            db["leaderboardEnabled"] = "True"
-            lb = " (leaderboard enabled for starboard 1 btw)"
+        if starboard_id == 1:
+            if enable_leaderboard == "yes" and db["leaderboardEnabled"] == "False":
+                db["leaderboardEnabled"] = "True"
+                lb = " (leaderboard enabled for starboard 1 btw)"
 
-        if enable_leaderboard == "no" and db["leaderboardEnabled"] == "True":
-            db["leaderboardEnabled"] = "False"
-            lb = " (leaderboard disabled for starboard 1 btw)"
+            if enable_leaderboard == "no" and db["leaderboardEnabled"] == "True":
+                db["leaderboardEnabled"] = "False"
+                lb = " (leaderboard disabled for starboard 1 btw)"
 
-        if threshold <= 0:
-            # Remove this starboard config
-            for key in ["channel_id", "emoji", "threshold", "webhook_url"]:
-                db.pop(f"starboard_{key}{suffix}", None)
-            save_db(server_id, db)
-            await interaction.followup.send(f"❌ Removed starboard {starboard_id}{lb}")
-            return
+            if threshold <= 0:
+                db.pop(db["starboards"][str(starboard_id)], None)
+                save_db(server_id, db)
+                await interaction.followup.send(f"❌ Removed starboard {starboard_id}{lb}")
+                return
 
         # Set this starboard config
-        db[f"starboard_channel_id{suffix}"] = channel.id
-        db[f"starboard_emoji{suffix}"] = emoji
-        db[f"starboard_threshold{suffix}"] = threshold
+        db["starboards"][str(starboard_id)]["channel"] = channel.id
+        db["starboards"][str(starboard_id)]["emoji"] = emoji
+        db["starboards"][str(starboard_id)]["threshold"] = threshold
         save_db(server_id, db)
 
         await interaction.followup.send(f"⭐ Starboard {starboard_id} set to {channel.mention} with emoji {emoji} and threshold {threshold}{lb}.")
@@ -1553,6 +1578,9 @@ async def setstarboard(interaction: discord.Interaction, channel: discord.TextCh
 
 @tree.command(name="leaderboard", description="who has the most boarded stars")
 async def leaderboard(ctx: commands.Context):
+    db.setdefault("starboards", {})
+    db["starboards"].setdefault("1", {})
+    db["starboards"]["1"].setdefault("emoji", "⭐")
     amount = 10
     db = load_db(str(ctx.guild.id))
     if "leaderboard" not in db or not db["leaderboard"]:
@@ -1567,10 +1595,10 @@ async def leaderboard(ctx: commands.Context):
         counter += 1
         if counter > 10:
             break
-        leaderboard = leaderboard + f"{counter}. <@{member}>: {db['leaderboard'][member]} {db['starboard_emoji']}\n"
+        leaderboard = leaderboard + f'{counter}. <@{member}>: {db["leaderboard"][member]} {db["starboards"]["1"]["emoji"]}\n'
 
     embed = discord.Embed(
-        title=f"Top 10 {db['starboard_emoji']}s:",
+        title=f'Top 10 {db["starboards"]["1"]["emoji"]}s:',
         color=discord.Color.blue(),
         description=leaderboard
     )
@@ -1615,10 +1643,7 @@ async def on_raw_reaction_add(payload):
     guild_id = str(payload.guild_id)
     db = load_db(guild_id)
     guild = bot.get_guild(payload.guild_id)
-
-    # Try default starboard and numbered starboards
-    starboard_ids = [1] + [int(k.split("_")[-1]) for k in db if k.startswith("starboard_channel_id_")]
-    starboard_ids = list(set(starboard_ids))  # Avoid duplicates
+    db.setdefault("starboards", {})
 
     logging_channel_id = db.get("reaction_log_channel")
     if logging_channel_id:
@@ -1704,13 +1729,13 @@ async def on_raw_reaction_add(payload):
                             if db["welcome"]["mode"] == "OnVerify":
                                 await welcomeUser(guild_id, user.id)
 
-
-    for starboard_id in starboard_ids:
-        suffix = "" if starboard_id == 1 else f"_{starboard_id}"
-        emoji = db.get(f"starboard_emoji{suffix}")
-        threshold = db.get(f"starboard_threshold{suffix}", 3)
-        channel_id = db.get(f"starboard_channel_id{suffix}")
-        webhook_id = db.get(f"starboard_webhook_id{suffix}")
+    if "starboard-blacklisted" in db and str(payload.channel_id) in db["starboard-blacklisted"]:
+        return
+    for starboard_id in db["starboards"]:
+        emoji = db["starboards"][starboard_id].get("emoji")
+        threshold = db["starboards"][starboard_id].get("threshold", 3)
+        channel_id = db["starboards"][starboard_id].get("channel")
+        webhook_id = db["starboards"][starboard_id].get("webhook")
 
         if not emoji or not channel_id:
             continue
@@ -1748,7 +1773,6 @@ async def on_raw_reaction_add(payload):
 
                 webhook = None
 
-                # Try to get the existing webhook
                 if webhook_id:
                     try:
                         webhooks = await starboard_channel.webhooks()
@@ -1764,7 +1788,7 @@ async def on_raw_reaction_add(payload):
                         avatar=mlav
                     )
                     webhook_id = webhook_obj.id
-                    db[f"starboard_webhook_id{suffix}"] = webhook_id
+                    db["starboards"][starboard_id]["webhook"] = webhook_id
                     save_db(guild_id, db)
                     webhook = webhook_obj
 
@@ -1915,7 +1939,7 @@ async def setmodrole(ctx: commands.Context, role_type: Literal["admin", "mod", "
 @tree.command(name="setchanneltype", description="Set a channel as a type of role (slow catching, dementia, etc) for the bot")
 @discord.app_commands.default_permissions(manage_guild=True)
 @app_commands.describe(channel_type="What kind of role", channel="The channel to set")
-async def setchanneltype(ctx: commands.Context, channel_type: Literal["catching", "catching-birds", "haikus-allowed", "slow_catching", "dementia_chats", "the_ncpol_press", "one-message-go", "nonsence", "evil-dictator-chat", "banner-submissions", "no-ai", "spammy"], channel: discord.TextChannel, remove: truefalse = "no"):
+async def setchanneltype(ctx: commands.Context, channel_type: Literal["catching", "catching-birds", "haikus-allowed", "slow_catching", "dementia_chats", "the_ncpol_press", "one-message-go", "nonsense", "evil-dictator-chat", "banner-submissions", "no-ai", "spammy", "starboard-blacklisted"], channel: discord.TextChannel, remove: truefalse = "no"):
     try:
         await ctx.response.defer(ephemeral=False)
     except Exception as e:
@@ -2805,12 +2829,15 @@ cheerio!
                             reply_chain_cache[message.id] = {"Content": f"{garry}: {message.content}\n", "IDs": [message.id]}
                             currentchain = message.id
                         context = reply_chain_cache[currentchain]["Content"]
+                    getthis = ""
                     if message.guild:
                         name = ai_db.get(str(message.guild.id), {}).get("name", display_name)
                         prompt = ai_db.get(str(message.guild.id), {}).get("prompt", defaultprompt.replace(";{%!name!%};", name))
+                        getthis = str(message.guild.id)
                     else:
                         name = ai_db.get(str(message.author.id), {}).get("name", display_name)
                         prompt = ai_db.get(str(message.author.id), {}).get("prompt", defaultprompt.replace(";{%!name!%};", name))
+                        getthis = str(message.author.id)
     
                     ctblk = ""
                     if chainexists:
@@ -2826,9 +2853,9 @@ cheerio!
                     if isinstance(ai_db["Memories"][str(message.author.id)], list):
                         ai_db["Memories"][str(message.author.id)] = {}
 
-                    if str(message.guild.id) in ai_db["Memories"][str(message.author.id)]:
+                    if getthis in ai_db["Memories"][str(message.author.id)]:
                         mems = ""
-                        for mem in ai_db['Memories'][str(message.author.id)][str(message.guild.id)]:
+                        for mem in ai_db['Memories'][str(message.author.id)][getthis]:
                             mems += "* "+mem+"\n"
                         memories = f"Memories stored for user: {mems}"
 
@@ -2869,15 +2896,15 @@ Now respond to this query from {garry}:
                     response = await query_ollama(query)
                     response_cleaned = response.replace("\n!remember", "!remember").replace("\ndanger_wipe_memories", "danger_wipe_memories")
                     response_cleaned = response.replace("!remember", "\n!remember").replace("danger_wipe_memories", "\ndanger_wipe_memories")
-                    ai_db["Memories"][str(message.author.id)].setdefault(str(message.guild.id), [])
+                    ai_db["Memories"][str(message.author.id)].setdefault(getthis, [])
                     memlog = ""
                     if response_cleaned.split('\n')[-1].startswith("!remember"):
-                        ai_db["Memories"][str(message.author.id)][str(message.guild.id)].append(response_cleaned.split('\n')[-1][10:])
+                        ai_db["Memories"][str(message.author.id)][getthis].append(response_cleaned.split('\n')[-1][10:])
                         memlog = f"\n-# 🔮 Saved to memory: {response_cleaned.split('\n')[-1][10:]}"
                         response_cleaned = "\n".join(response_cleaned.split("\n")[:-1])
                         save_ai_db(ai_db)
                     elif response_cleaned.split('\n')[-1] == "danger_wipe_memories":
-                        ai_db["Memories"][str(message.author.id)][str(message.guild.id)] = []
+                        ai_db["Memories"][str(message.author.id)][getthis] = []
                         memlog = "\n-# 😵 Wiped all memories!"
                         response_cleaned = "\n".join(response_cleaned.split("\n")[:-1])
                         save_ai_db(ai_db)
@@ -3227,6 +3254,8 @@ Now respond to this query from {garry}:
                     if len(embed.description.split()) == 0:
                         return
                     username = embed.description.split()[0].lower()
+                    if username == "ping!":
+                        username = embed.description.split()[1].lower()
 
             if catchdetected:
                 if username == "Unknown Catcher":
@@ -3532,8 +3561,8 @@ the message is {message.content}"""
         if gwg:
             await message.channel.send(f"*\"{gwg}\"*\n ‎- {message.author}")
 
-    # Check if it's a nonsence chat
-    if db.get("nonsence", {}).get(channel_id):
+    # Check if it's a nonsense chat
+    if db.get("nonsense", {}).get(channel_id):
         data = f"{message.author}\n{message.content.replace('\n', ' ')}"
         await message.delete()
         query = f"""You will be provided a message by a user. You need to respond in the same format with the username on first line and the message on the second line. Rephrase both the user's username as well as their message. The rephrasing doesn't have to make sense, but has to be derived from the original message. Make sure that the username is edited, Do not include prefactory text or make the username 'user' anything.
@@ -3583,25 +3612,22 @@ Original message:
 
     await bot.process_commands(message)
 
-@bot.command(help="basically abotminbmnrnr has a level 0 beta eval command")
+@bot.command(help="(BOT OWNER) basic eval")
 async def print(ctx, *, prompt: str):
     if ctx.author.id == evaluser:
         try:
-            result = evil(prompt, {"__builtins__": __builtins__}, {})
-            if asyncio.iscoroutine(result):
-                result = await result
-            if result is None:
-                await ctx.send("Success!")
-            else:
-                await ctx.send(str(result))
-        except Exception as e:
-            await ctx.send(str(e))
+            await message.reply(eval(text[9:]))
+        except Exception:
+            try:
+                await message.reply(traceback.format_exc())
+            except Exception:
+                pass
 
-@bot.command(help="and cat bot has a level 100 skibidi sigma mafia boss eval command")
+@bot.command(help="(BOT OWNER) advanced eval")
 async def eval(ctx, *, prompt: str):
     # complex eval, multi-line + async support
     # requires the full `await message.channel.send(2+3)` to get the result
-    # thanks mia lilenakos
+    # thanks to lia milenakos for this code, under the AGPL License
     if ctx.author.id == evaluser:
         spaced = ""
         for i in prompt.split("\n"):
