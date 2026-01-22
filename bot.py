@@ -71,7 +71,7 @@ default_join_messages = [
 ]
 
 TICKET_BUTTON_PREFIX = "ticket_button_wow_yay:"
-ver = "v1.3.7.2"
+ver = "v1.3.7.3"
 defaultstatus = "NeoCat Police "+ver
 if "status" in cfg:
     defaultstatus = cfg["status"]
