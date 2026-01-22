@@ -1574,8 +1574,6 @@ async def setstarboard(interaction: discord.Interaction, channel: discord.TextCh
         await ctx.channel.send(f"500 internal server error\n-# {e}")
 
 @bot.tree.command(name="list-emojiboards", description="get a list of all emojiboards")
-@commands.has_permissions(manage_guild=True)
-@discord.app_commands.default_permissions(manage_guild=True)
 async def setstarboard(interaction: discord.Interaction):
     try:
         await interaction.response.defer(ephemeral=False)
