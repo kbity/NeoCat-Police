@@ -74,7 +74,7 @@ console_log = print # DO YOU SPEAK JAVASCRIPT??
 evil = eval
 
 TICKET_BUTTON_PREFIX = "ticket_button_wow_yay:"
-ver = "v1.3.6"
+ver = "v1.3.7"
 defaultstatus = "NeoCat Police "+ver
 if "status" in cfg:
     defaultstatus = cfg["status"]
