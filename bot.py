@@ -1584,8 +1584,10 @@ async def setstarboard(interaction: discord.Interaction):
 
         starboards = ""
         for key in db["starboards"]:
-            if 'channel' in db['starboards'][key] and if 'emoji' in db['starboards'][key] and if 'threshold' in db['starboards'][key]:
-                starboards += f"**Emojiboard {key}**:\n* <#{db['starboards'][key]['channel']}> - {db['starboards'][key]['emoji']} ({db['starboards'][key]['threshold']})\n"
+            if 'channel' in db['starboards'][key]:
+                if 'emoji' in db['starboards'][key]:
+                    if 'threshold' in db['starboards'][key]:
+                        starboards += f"**Emojiboard {key}**:\n* <#{db['starboards'][key]['channel']}> - {db['starboards'][key]['emoji']} ({db['starboards'][key]['threshold']})\n"
 
         embed = discord.Embed(
             title=f'Emojiboards in {interaction.guild}',
