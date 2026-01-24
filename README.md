@@ -1,6 +1,7 @@
 1. get the things needed with `pip install discord.py translate nltk langdetect python-dotenv aiohttp syllables pydub SpeechRecognition`
-2. create .env and add in TOKEN=BOT.TOKEN_12345 with "BOT.TOKEN_12345" being your bot's token
-3. run bot.py (python bot.py)
+2. optional: also get detection-engine to allow for raspberry to work
+3. create .env and add in TOKEN=BOT.TOKEN_12345 with "BOT.TOKEN_12345" being your bot's token
+4. run bot.py (python bot.py)
 
    its as simple as that.
    
@@ -10,4 +11,4 @@
    
    https://discord.com/oauth2/authorize?client_id=1280049146023252059
    
-   to enable raspberry, you need to get berry.py and berry.json from... somewhere
+   to enable raspberry, you need to get berry.py and configure berry.json
