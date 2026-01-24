@@ -13,6 +13,7 @@ from langdetect import detect
 from typing import Literal, Optional
 from dotenv import load_dotenv
 from datetime import datetime, timezone, timedelta
+from os.path import isfile, join
 
 load_dotenv()
 TOKEN = os.getenv("TOKEN")
@@ -36,18 +37,23 @@ kreisi_links = cfg["kreisilinks"]
 enableAI = cfg["enableAI"]
 emojis = cfg["emojis"]
 defaultdctimeout = cfg["defaultdctimeout"]
+enable_raspberry = cfg.get("raspberry", False)
+raspberry_url = None
+if enable_raspberry:
+    raspberry_url = cfg["raspberry_url"]
 
-# AI setup
-reply_chain_cache = {}
-ailoglength = {}
+if enableAI:
+    # AI setup
+    reply_chain_cache = {}
+    ailoglength = {}
 
-# AI Config
-MAX_CHAIN_DEPTH = cfg["maxchaindepth"]
-ai_llm = cfg["ai_llm"]
-ai_url = cfg["ai_url"]
-defaultprompt = cfg["ai_prompt"]
-# ;{%!name!%}; is replaced by the default name
-# AI setup end
+    # AI Config
+    MAX_CHAIN_DEPTH = cfg["maxchaindepth"]
+    ai_llm = cfg["ai_llm"]
+    ai_url = cfg["ai_url"]
+    defaultprompt = cfg["ai_prompt"]
+    # ;{%!name!%}; is replaced by the default name
+    # AI setup end
 
 mlav = None
 with open("img.png", "rb") as image:
@@ -71,7 +77,8 @@ default_join_messages = [
 ]
 
 TICKET_BUTTON_PREFIX = "ticket_button_wow_yay:"
-ver = "v1.3.7.4"
+RASPBERRY_BUTTON_PREFIX = "raspberry_button_whoo_hooo:"
+ver = "v1.3.8"
 defaultstatus = "NeoCat Police "+ver
 if "status" in cfg:
     defaultstatus = cfg["status"]
@@ -80,6 +87,8 @@ print("preparing...")
 # make folders
 os.makedirs("data", exist_ok=True)
 os.makedirs("modlogs", exist_ok=True)
+if enable_raspberry:
+    os.makedirs("registry", exist_ok=True)
 
 bot = commands.Bot(command_prefix=cfg["prefix"], intents=intents)
 tree = bot.tree
@@ -105,16 +114,16 @@ async def is_16_9(img_bytes, tol=0):
     return abs(width * 9 - height * 16) <= tol
 
 # Load existing data from db.json
-def load_db(guildId):
+def load_db(guildId, dir = "data"):
     try:
-        with open(f"data/{guildId}.json", 'r') as f:
+        with open(f"{dir}/{guildId}.json", 'r') as f:
             return json.load(f)
     except FileNotFoundError:
         return {}
 
 # Save data to db.json
-def save_db(guildId, data):
-    with open(f"data/{guildId}.json", 'w') as f:
+def save_db(guildId, data, dir = "data"):
+    with open(f"{dir}/{guildId}.json", 'w') as f:
         json.dump(data, f, indent=4)
 
 # Load existing data from ai_db.json
@@ -130,23 +139,10 @@ def save_ai_db(data):
     with open('ai_db.json', 'w') as f:
         json.dump(data, f, indent=4)
 
-# Load existing data from modlogs/guildId.json
-def load_logs(guildId):
-    try:
-        with open(f"modlogs/{guildId}.json", 'r') as f:
-            return json.load(f)
-    except FileNotFoundError:
-        return {}
-
-# Save data to modlogs/guildId.json
-def save_logs(guildId, data):
-    with open(f"modlogs/{guildId}.json", 'w') as f:
-        json.dump(data, f, indent=4)
-
 # modlogs function
 def modlog(guildId, memberIdi, issuerId, reason, punishment, until=0):
     memberId = str(memberIdi)
-    logs = load_logs(guildId)
+    logs = load_db(guildId, "modlogs")
     timestamp = round(time.time())
     if memberId not in logs or not logs[memberId]:
         logs[memberId] = {}
@@ -155,7 +151,7 @@ def modlog(guildId, memberIdi, issuerId, reason, punishment, until=0):
         logs[memberId]["punishments"].append([issuerId, reason, punishment, timestamp, until])
     else:
         logs[memberId]["punishments"].append([issuerId, reason, punishment, timestamp, (timestamp+until)])
-    save_logs(guildId, logs)
+    save_db(guildId, logs, "modlogs")
 
 def servermessages(guildId):
     global default_join_messages
@@ -247,7 +243,7 @@ class TicketButton(discord.ui.View):
     @discord.ui.button(label="Open a ticket", style=discord.ButtonStyle.primary, custom_id=f"{TICKET_BUTTON_PREFIX}ticket_button")
     async def persistent_button_callback(self, interaction: discord.Interaction, button: discord.ui.Button):
         db = load_db(str(interaction.guild.id))
-        if db.get("aiticketresponse"):
+        if db.get("aiticketresponse") and enableAI:
             modal = SimpleTicketModal()
             await interaction.response.send_modal(modal)
             return
@@ -316,16 +312,47 @@ class FollowupButtons(discord.ui.View):
         thread_url = f"https://discord.com/channels/{interaction.guild.id}/{thread.id}"
         await log_ticket(interaction.guild, f"New Ticket! {thread_url}", embeds=[self.qembed, self.embed])
 
+class RaspberryButton(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(label="Verify", style=discord.ButtonStyle.primary, custom_id=f"{RASPBERRY_BUTTON_PREFIX}ticket_button")
+    async def persistent_button_callback(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer(ephemeral=True)
+        db = load_db(str(interaction.guild.id))
+        berry = load_db(str(interaction.guild.id), "registry")
+        if enable_raspberry:
+            if "verified" in berry and str(interaction.user.id) in berry["verified"]:
+                print("user already verified")
+            else:
+                input = interaction.guild.id
+                byte_len = (input.bit_length() + 7) // 8
+                base = base64.urlsafe_b64encode(input.to_bytes(byte_len, 'big'))
+                input2 = interaction.user.id
+                byte_len = (input2.bit_length() + 7) // 8
+                base2 = base64.urlsafe_b64encode(input2.to_bytes(byte_len, 'big'))
+                basec = base.decode('utf-8').replace("=", "")
+                base2c = base2.decode('utf-8').replace("=", "")
+                view = View()
+                berry_url = f"{raspberry_url}/{basec}/{base2c}"
+                view.add_item(Button(label=f"Verify", url=berry_url))
+                await interaction.followup.send(f"Click this link to verify:", view=view, ephemeral=True)
+        else:
+            await interaction.followup.send(f"Raspberry Unavailable", ephemeral=True)
+
 @bot.event
 async def on_ready():
     bot.add_view(TicketButton())
-    print("Registered TicketButton.")
+    bot.add_view(RaspberryButton())
+    print("Registered TicketButton and RaspberryButton")
 
     bot.session = aiohttp.ClientSession()
     await bot.tree.sync()
     print(f"yiur bto is runnign :3 ({bot.user})")
     ratelimit_tick.start()
     slowcatching_tick.start()
+    if enable_raspberry:
+        raspberry_tick.start()
 
     data_folder = "./data"
 
@@ -371,6 +398,32 @@ async def on_ready():
 
     print("all slow catching channels unlocked")
     await bot.change_presence(activity=discord.CustomActivity(name=defaultstatus))
+    if enable_raspberry:
+        print("Starting Raspberry...")
+        asyncio.create_task(run_berry())
+
+
+async def run_berry():
+    process = await asyncio.create_subprocess_exec(
+        "python", "berry.py",
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE
+    )
+
+    async def read_stream(stream, callback):
+        while True:
+            line = await stream.readline()
+            if not line:
+                break
+            callback(line.decode().rstrip())
+
+    # Create tasks to read stdout and stderr concurrently
+    await asyncio.gather(
+        read_stream(process.stdout, lambda l: print(f"[berry.py stdout] {l}")),
+        read_stream(process.stderr, lambda l: print(f"[berry.py stderr] {l}"))
+    )
+
+    await process.wait()  # Wait for the process to exit
 
 @tree.command(name="ping", description="tests roundtrip latency")
 async def ping(ctx: commands.Context):
@@ -383,7 +436,7 @@ async def ping(ctx: commands.Context):
 @discord.app_commands.default_permissions(view_audit_log=True)
 async def modlogs(ctx: commands.Context, user: discord.User, amount: int = 10):
     memberId = str(user.id)
-    logs = load_logs(str(ctx.guild.id))
+    logs = load_db(str(ctx.guild.id), "modlogs")
     if memberId not in logs or not logs[memberId]:
         await ctx.response.send_message("no punishments found", ephemeral=True)
         return
@@ -526,19 +579,30 @@ async def info(ctx: commands.Context, reason: str = "None"):
     except Exception as e:
         await ctx.channel.send(f"500 internal server error\n-# {e}")
 
-@tree.command(name="setticket", description="who's idea was this??")
+@tree.command(name="setbutton", description="who's idea was this??")
 @discord.app_commands.default_permissions(manage_guild=True)
-@app_commands.describe(message="enter this or i will yap")
-async def info(ctx: commands.Context, message: str = "sample text"):
-    await ctx.response.defer(ephemeral=True) # prevents "application did not respond"
+@app_commands.describe(message="enter this or i will yap", type="wether to add a ticket or a verification button")
+async def info(ctx: commands.Context, message: str = "sample text", type: Literal["Ticket", "Verification"] = "Ticket"):
     try:
+        await ctx.response.defer(ephemeral=True) # prevents "application did not respond"
+        message = message.replace(r"\n", "\n")
         if isinstance(ctx.channel, discord.TextChannel):
+            title = "Open a ticket"
+            if type == "Verification":
+                title = "Verify to view community channels"
             embed = discord.Embed(
-                title="Open a ticket",
+                title=title,
                 color=discord.Color.from_str("#757e8a"),
                 description=message
             )
-            await ctx.channel.send(embed=embed, view=TicketButton())
+            if type == "Ticket":
+                await ctx.channel.send(embed=embed, view=TicketButton())
+                await ctx.followup.send("ok")
+            elif type == "Verification":
+                await ctx.channel.send(embed=embed, view=RaspberryButton())
+                await ctx.followup.send("ok")
+            else:
+                await ctx.channel.send("what")
         else:
             await ctx.followup.send(f"dumbass {emojis['pointlaugh']}\ncant make a tickets channel unless its a channel with threads")
     except Exception as e:
@@ -1073,7 +1137,7 @@ async def modlogs(ctx: commands.Context, messageid: str, newreason: str):
         await message.edit(content=f"{before}`{newreason}`{after}")
         mlstatus = "\n -# failed to update modlogs"
         if not "mod" in message.content and not len(mentions) != 2:
-            logs = load_logs(ctx.guild.id)
+            logs = load_db(ctx.guild.id, "modlogs")
             logee = mentions[0]
             logger = mentions[1]
             check = logs[logee]["punishments"]
@@ -1105,7 +1169,7 @@ async def modlogs(ctx: commands.Context, messageid: str, newreason: str):
                     logs[logee]["punishments"][ind][1] = newreason
                     mlstatus = "\n -# updated modlogs!"
                     break
-            save_logs(ctx.guild.id, logs)
+            save_db(ctx.guild.id, logs, "modlogs")
         await ctx.followup.send(f"ok{mlstatus}")
     except Exception as e:
         await ctx.channel.send(f"500 internal server error\n-# {e}")
@@ -1117,7 +1181,7 @@ async def modlogs(ctx: commands.Context, messageid: str, newreason: str):
 @app_commands.describe(reason="you did this?")
 async def warn(ctx: commands.Context, user: discord.User, reason: str = "None"):
     memberId = str(user.id)
-    logs = load_logs(str(ctx.guild.id))
+    logs = load_db(str(ctx.guild.id), "modlogs")
     totalwarns = 1
 
     if memberId in logs and "punishments" in logs[memberId]:
@@ -2299,7 +2363,7 @@ async def translate(interaction: discord.Interaction, message: discord.Message):
             translator = Translator(from_lang="en", to_lang=detected)
 
             totalwarns = 1
-            logs = load_logs(interaction.guild.id)
+            logs = load_db(interaction.guild.id, "modlogs")
             if str(message.author.id) in logs and "punishments" in logs[str(message.author.id)]:
                 for punishment in logs[str(message.author.id)]["punishments"]:
                     if punishment[2] == "warn":
@@ -3470,7 +3534,10 @@ Now respond to this query from {garry}:
                     except Exception:
                         pass
                     await log_spammy(message.guild, f"{message.author.mention} was permanently banned by {bot.user.mention} for `Picked <13 in onboarding`.")
-                    await message.guild.ban(message.author, reason="Picked <13 in onboarding", delete_message_seconds=60)
+                    try:
+                        await message.guild.ban(message.author, reason="Picked <13 in onboarding", delete_message_seconds=60)
+                    except Exception as e:
+                        print(f"failed to ban an underage user ({message.author}), {e}")
                     return
 
     # Check if it's a dementia chat channel
@@ -3780,6 +3847,66 @@ async def slowcatching_tick():
             except Exception as e:
                 print(e)
                 sleepycatch[ch]["TTL"] = 10
+
+@tasks.loop(seconds=5)
+async def raspberry_tick():
+    onlyfiles = [f for f in os.listdir("registry/") if isfile(join("registry/", f))]
+    for server in onlyfiles:
+        guild_id = server.replace(".json", "")
+        guild = bot.get_guild(int(guild_id))
+        db = load_db(guild_id)
+        berry = load_db(guild_id, "registry")
+        changed = False
+        if "pending_fails" in berry:
+            for fail in berry["pending_fails"]:
+                try:
+                    await log_action(guild, fail)
+                    changed = True
+                except Exception as e:
+                    print(f"error {e}")
+            berry = load_db(guild_id, "registry")
+            berry["pending_fails"] = []
+            if changed:
+                save_db(guild_id, berry, "registry")
+
+        if "verified" in berry:
+            verifyroleFile = db.get("verified_role", None)
+            underage_role = db.get("underage_role", None)
+            try:
+                verifyrole = guild.get_role(int(verifyroleFile))
+            except Exception as e:
+                verifyrole = None
+            try:
+                underagerole = guild.get_role(int(underage_role))
+            except Exception as e:
+                underagerole = None
+            if verifyrole:
+                tspmo = tuple(berry["verified"])
+                for success in tspmo:
+                    try:
+                        user = await guild.fetch_member(success)
+                        await user.add_roles(verifyrole, reason="verification")
+                        if "underage" in berry and success in berry["underage"]:
+                            if underagerole:
+                                await user.add_roles(underagerole, reason="selected <13 in verification")
+                    except Exception as e:
+                        print(f"error {e}")
+                    dm_message = f"Verification Successful!\nWelcome to {guild.name}!"
+                    try:
+                        await user.send(dm_message)
+                    except Exception as e:
+                        print(f"failed to DM, {e}")
+                    if "welcome" in db:
+                        if db["welcome"]["mode"] == "OnVerify":
+                            try:
+                                await welcomeUser(guild.id, user.id)
+                            except Exception as e:
+                                print(f"error {e}")
+                    berry = load_db(guild_id, "registry")
+                    berry["verified"].remove(str(success))
+                    save_db(str(guild.id), berry, "registry")
+            else:
+                await log_action(guild, "no verification role! please set one with `/setroletype`!")
 
 bot.run(TOKEN)
 
