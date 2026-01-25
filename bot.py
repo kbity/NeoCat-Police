@@ -27,6 +27,7 @@ sleepycatch = {}
 bannersubmissions = {}
 spoilerspammedonce = {}
 d = cmudict.dict()
+berry_lock = asyncio.Lock()
 usernameCache = {}
 user_ai_ratelimits = {}
 catchesInChannels = {}
@@ -37,6 +38,9 @@ kreisi_links = cfg["kreisilinks"]
 enableAI = cfg["enableAI"]
 emojis = cfg["emojis"]
 defaultdctimeout = cfg["defaultdctimeout"]
+
+tips = cfg["tips"]
+
 enable_raspberry = cfg.get("raspberry", False)
 raspberry_url = None
 if enable_raspberry:
@@ -78,7 +82,7 @@ default_join_messages = [
 
 TICKET_BUTTON_PREFIX = "ticket_button_wow_yay:"
 RASPBERRY_BUTTON_PREFIX = "raspberry_button_whoo_hooo:"
-ver = "v1.3.8"
+ver = "v1.3.9"
 defaultstatus = "NeoCat Police "+ver
 if "status" in cfg:
     defaultstatus = cfg["status"]
@@ -349,10 +353,18 @@ async def on_ready():
     bot.session = aiohttp.ClientSession()
     await bot.tree.sync()
     print(f"yiur bto is runnign :3 ({bot.user})")
-    ratelimit_tick.start()
-    slowcatching_tick.start()
+
+    if not slowcatching_tick.is_running():
+        print("Started Slow Catching Tick")
+        slowcatching_tick.start()
+    if enableAI:
+        if not ratelimit_tick.is_running():
+            print("Started AI Ratelimit Tick")
+            ratelimit_tick.start()
     if enable_raspberry:
-        raspberry_tick.start()
+        if not raspberry_tick.is_running():
+            print("Started Verification Tick")
+            raspberry_tick.start()
 
     data_folder = "./data"
 
@@ -399,31 +411,53 @@ async def on_ready():
     print("all slow catching channels unlocked")
     await bot.change_presence(activity=discord.CustomActivity(name=defaultstatus))
     if enable_raspberry:
-        print("Starting Raspberry...")
         asyncio.create_task(run_berry())
 
+berry_process: asyncio.subprocess.Process | None = None
 
 async def run_berry():
-    process = await asyncio.create_subprocess_exec(
+    global berry_process
+
+    # If berry.py is already running, stop it first
+    if berry_process is not None:
+        if berry_process.returncode is None:
+            print("berry.py already running, terminating it…")
+            berry_process.terminate()
+
+            try:
+                await asyncio.wait_for(berry_process.wait(), timeout=5)
+            except asyncio.TimeoutError:
+                print("berry.py did not exit, killing it…")
+                berry_process.kill()
+                await berry_process.wait()
+
+        berry_process = None
+
+    # Start berry.py
+    print("Starting Raspberry...")
+    proc = await asyncio.create_subprocess_exec(
         "python", "berry.py",
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE
     )
 
-    async def read_stream(stream, callback):
-        while True:
-            line = await stream.readline()
-            if not line:
-                break
-            callback(line.decode().rstrip())
+    berry_process = proc  # publish AFTER spawn
 
-    # Create tasks to read stdout and stderr concurrently
+    async def read_stream(stream, tag):
+        async for line in stream:
+            print(f"[berry.py {tag}] {line.decode().rstrip()}")
+
+    # Read stdout + stderr concurrently
     await asyncio.gather(
-        read_stream(process.stdout, lambda l: print(f"[berry.py stdout] {l}")),
-        read_stream(process.stderr, lambda l: print(f"[berry.py stderr] {l}"))
+        read_stream(berry_process.stdout, "stdout"),
+        read_stream(berry_process.stderr, "stderr"),
     )
 
-    await process.wait()  # Wait for the process to exit
+    await proc.wait()
+    print("berry.py exited")
+
+    if berry_process is proc:
+        berry_process = None
 
 @tree.command(name="ping", description="tests roundtrip latency")
 async def ping(ctx: commands.Context):
@@ -484,16 +518,32 @@ async def info(ctx: commands.Context):
         await ctx.channel.send(f"500 internal server error\n-# {e}")
 
 @tree.command(name="tip", description="unexpected tip")
-async def info(ctx: commands.Context):
-    tips = ["NeoCat Police was developed with the help of stella showing me the commands", "this bot is inspired by tema5002's ctqa bto", "this bot allows for your server having its own yapping city", "this bot is made of 30% ai slop", "i eat sand", "this bot has its own AI that is sometimes offline", "bird used to have moderation commands, but they sucked.", "unlike real cat police, NeoCat Police can be used in your own servers.", "this bot allows for an unlimited amount of starboards", "NeoCat Police is made in python using discord.py", "mari2 created NeoCat Police", "NeoCat Police has message logging", "yapping cities in NeoCat Police actually send the author messages to DMs, unlike yapper", "hungry bot+ is based on actual hungry bot code", "this bot caused catboard to shut down :sob:", "speaking about the previous tip, /leaderboard was pulled from catboard", "quine is a song made by kvellc from another timeline", "this bot has many removed Cat Police features", "you can roll up to 100 dice with 1000 sides at once", "this bot's messy source code available on github at https://github.com/kbity/neocat-police", "AI memories are stored per server, not globally", "this bot has its print and eval functions shadowed", "you can change this bot's avatar with /changeavatar", "this bot also has /base64-encode and /base64-decode built in!", "AI can be disabled per channel, globally, and can be restricted to a specific role", "this bot has various easter eggs"]
+@app_commands.describe(id = 'uhhhhhh')
+async def tip(ctx: commands.Context, id: int = None):
     try:
-        await ctx.response.send_message(emojis["tips"]+" "+random.choice(tips))
+        if id is None:
+            await ctx.response.send_message(emojis["tips"]+" "+random.choice(tips))
+        else:
+            if 1 > id:
+                await ctx.response.send_message(emojis["tips"]+" You're not funny.")
+                return
+            if id > len(tips):
+                await ctx.response.send_message(f"limit is {len(tips)}")
+            else:
+                await ctx.response.send_message(emojis["tips"]+" "+tips[id-1])
+    except Exception as e:
+        await ctx.channel.send(f"500 internal server error\n-# {e}")
+
+@tree.command(name="help", description="link to help documents")
+async def help(ctx: commands.Context):
+    try:
+        await ctx.response.send_message("[Click here to go to the NeoCat Police Documentation](https://kbity.github.io/neocat-police/index.html)")
     except Exception as e:
         await ctx.channel.send(f"500 internal server error\n-# {e}")
 
 @tree.command(name="reverse", description="reverses text")
 @app_commands.describe(text="text to reverse")
-async def info(ctx: commands.Context, text: str):
+async def reverse(ctx: commands.Context, text: str):
     try:
         await ctx.response.send_message(text[::-1])
     except Exception as e:
@@ -501,7 +551,7 @@ async def info(ctx: commands.Context, text: str):
 
 @tree.command(name="randomcase", description="randomizes case of text")
 @app_commands.describe(text="text to randomize case")
-async def info(ctx: commands.Context, text: str):
+async def randomcase(ctx: commands.Context, text: str):
     try:
         kreisifed = ''.join(x.upper() if random.randint(0,1) else x for x in text.lower())
         await ctx.response.send_message(kreisifed)
@@ -510,7 +560,7 @@ async def info(ctx: commands.Context, text: str):
 
 @tree.command(name="dice", description="roles an amount of dices with sides")
 @app_commands.describe(sides="d1 to d1000", count="1 to 100 dice")
-async def info(ctx: commands.Context, sides: int = 6, count: int = 1):
+async def dice(ctx: commands.Context, sides: int = 6, count: int = 1):
     try:
         if count < 1:
             await ctx.response.send_message(f"{emojis['neocat_cry']} you have **0** dice")
@@ -1401,6 +1451,8 @@ async def log(ctx: commands.Context, type: logtypes, channel: discord.TextChanne
     save_db(server_id, db)
 
 async def log_action(guild: discord.Guild, content: str):
+    if not guild:
+        return
     guild_id = str(guild.id)
     db = load_db(guild_id)
     channel_id = db.get("action_log_channel")
@@ -1409,6 +1461,8 @@ async def log_action(guild: discord.Guild, content: str):
         if channel:
             await channel.send(content, allowed_mentions=discord.AllowedMentions.none())
 async def log_spammy(guild: discord.Guild, content: str):
+    if not guild:
+        return
     guild_id = str(guild.id)
     db = load_db(guild_id)
     channel_id = db.get("spammy_log_channel")
@@ -1419,6 +1473,8 @@ async def log_spammy(guild: discord.Guild, content: str):
         if channel:
             await channel.send(content, allowed_mentions=discord.AllowedMentions.none())
 async def log_ticket(guild: discord.Guild, content: str, embeds: list = None):
+    if not guild:
+        return
     guild_id = str(guild.id)
     db = load_db(guild_id)
     channel_id = db.get("ticket_log_channel")
@@ -1890,7 +1946,7 @@ async def on_raw_reaction_add(payload):
                     db["leaderboard"][str(message.author.id)] += 1
                     save_db(payload.guild_id, db)
                 
-                if message.webhook_id:
+                if message.webhook_id and not message.interaction_metadata:
                     author_name = f"{message.author.display_name}"[:80]
                 else:
                     author_name = f"{message.author.display_name} ({message.author})"[:80]
@@ -3741,10 +3797,15 @@ Original message:
             complete = intro + spaced + ending
             exec(complete)
     
-        if message.content.lower().startswith(f"{cfg['prefix']}restart"):
+        if message.content.lower() == f"{cfg['prefix']}restart":
             print("restart has been triggered...")
             await message.reply("restarting bot...")
             os.execv(sys.executable, ['python'] + sys.argv)
+
+        if message.content.lower() == f"{cfg['prefix']}restart_verify":
+            print("berry restart has been triggered...")
+            await message.reply("restarting integrated web server...")
+            await run_berry()
 
         if message.content.lower().startswith(f"{cfg['prefix']}status"):
             try:
@@ -3862,6 +3923,12 @@ async def raspberry_tick():
                 try:
                     await log_action(guild, fail)
                     changed = True
+                    user_id = int(fail.split(">")[0][2:])
+                    user = await guild.fetch_member(user_id)
+                    try:
+                        await user.send(f"Verification failed in **{guild.name}**.\nPlease disable your VPN or try again later.\nIf you believe this is a mistake, create a support ticket (if applicable).")
+                    except Exception as e:
+                        print(f"failed to DM, {e}")
                 except Exception as e:
                     print(f"error {e}")
             berry = load_db(guild_id, "registry")

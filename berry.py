@@ -1,4 +1,4 @@
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from dotenv import load_dotenv
 import json, time, os, base64, hashlib, difflib
 from urllib.parse import urlparse, parse_qs
@@ -319,17 +319,25 @@ class MyServer(BaseHTTPRequestHandler):
         return fingerprint_data
 
     def do_GET(self):
-        fingerprint = self.get_browser_fingerprint()
-        parsed_url = urlparse(self.path)
-        query_params = parse_qs(parsed_url.query)
+        try:
+            fingerprint = self.get_browser_fingerprint()
+            parsed_url = urlparse(self.path)
+            query_params = parse_qs(parsed_url.query)
 
-        self.send_response(200)
-        self.send_header("Content-type", "text/html")
-        self.end_headers()
-        self.wfile.write(bytes(genhtmlpage(self.path, self.client_address[0], fingerprint, query_params), "utf-8"))
+            self.send_response(200)
+            self.send_header("Content-type", "text/html")
+            self.end_headers()
+            self.wfile.write(bytes(genhtmlpage(self.path, self.client_address[0], fingerprint, query_params), "utf-8"))
+        except Exception as e:
+            print("Handler crashed:", repr(e))
+            try:
+                self.send_error(500)
+            except:
+                print("failed to send error")
+                pass
 
 if __name__ == "__main__":        
-    webServer = HTTPServer((hostName, serverPort), MyServer)
+    webServer = ThreadingHTTPServer((hostName, serverPort), MyServer)
     print("Server started http://%s:%s" % (hostName, serverPort))
 
     try:
