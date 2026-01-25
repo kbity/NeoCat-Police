@@ -459,6 +459,28 @@ async def run_berry():
     if berry_process is proc:
         berry_process = None
 
+async def kill_berry():
+    global berry_process
+
+    if berry_process is not None:
+        if berry_process.returncode is None:
+            print("berry.py already running, terminating it…")
+            berry_process.terminate()
+
+            try:
+                await asyncio.wait_for(berry_process.wait(), timeout=5)
+            except asyncio.TimeoutError:
+                print("berry.py did not exit, killing it…")
+                berry_process.kill()
+                await berry_process.wait()
+
+        berry_process = None
+
+    print("berry.py exited")
+
+    if berry_process is proc:
+        berry_process = None
+
 @tree.command(name="ping", description="tests roundtrip latency")
 async def ping(ctx: commands.Context):
     try:
@@ -3800,6 +3822,7 @@ Original message:
         if message.content.lower() == f"{cfg['prefix']}restart":
             print("restart has been triggered...")
             await message.reply("restarting bot...")
+            await kill_berry()
             os.execv(sys.executable, ['python'] + sys.argv)
 
         if message.content.lower() == f"{cfg['prefix']}restart_verify":
