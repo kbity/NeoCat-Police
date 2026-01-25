@@ -478,9 +478,6 @@ async def kill_berry():
 
     print("berry.py exited")
 
-    if berry_process is proc:
-        berry_process = None
-
 @tree.command(name="ping", description="tests roundtrip latency")
 async def ping(ctx: commands.Context):
     try:
@@ -530,7 +527,13 @@ async def modlogs(ctx: commands.Context, user: discord.User, amount: int = 10):
 async def info(ctx: commands.Context):
     embed = discord.Embed(
         title=f"{emojis['neocat_police']} About NeoCat Police",
-        description="**`NeoCat Police`** is a reimplementation of @milenakos' \"Cat police\" bot, specifically for Cat Stand. Both bots function very similarly, but with some changes, such as NeoCat Police lacking Cat Bot statistics commands, not being hard coded for Cat Stand, and adding a few more features. NeoCat Police's existance was inspired by tema5002's Cat Bot clone called \"ctqa bto\", a clone of Cat Bot. \n\nthanks to morky for assistance with message logs\nthanks to lia for making Cat Police and providing code snippets and AI prompts, as well as the print and eval commands\nthanks to hexahedron1 for the purge easter egg images",
+        description="""
+**`NeoCat Police`** is a clone/reimplementation of `@milenakos`' "Cat police" bot, which was made specifically for Cat Stand.
+
+thanks to morky for assistance with message logs
+thanks to lia for making Cat Police, providing code snippets and AI prompts, the print and eval commands, and the HTML Verification Page
+thanks to hexahedron1 for the purge easter egg images
+""",
         color=discord.Color.blue()
     )
     embed.set_footer(text=f"NeoCat Police {ver}")
@@ -637,7 +640,7 @@ async def b64(ctx: commands.Context, string: str):
 @tree.command(name="close", description="lock emoji 2 cooler edition")
 @discord.app_commands.default_permissions(manage_threads=True)
 @app_commands.describe(reason="sybau")
-async def info(ctx: commands.Context, reason: str = "None"):
+async def close(ctx: commands.Context, reason: str = "None"):
     try:
         if isinstance(ctx.channel, discord.Thread) and ctx.channel.is_private():
             if ctx.channel.owner_id == bot.user.id:
@@ -654,7 +657,7 @@ async def info(ctx: commands.Context, reason: str = "None"):
 @tree.command(name="setbutton", description="who's idea was this??")
 @discord.app_commands.default_permissions(manage_guild=True)
 @app_commands.describe(message="enter this or i will yap", type="wether to add a ticket or a verification button")
-async def info(ctx: commands.Context, message: str = "sample text", type: Literal["Ticket", "Verification"] = "Ticket"):
+async def setbutton(ctx: commands.Context, message: str = "sample text", type: Literal["Ticket", "Verification"] = "Ticket"):
     try:
         await ctx.response.defer(ephemeral=True) # prevents "application did not respond"
         message = message.replace(r"\n", "\n")
