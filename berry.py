@@ -7,6 +7,24 @@ from detection_engine.engine.detection_engine import detect_ip
 cfg = json.load(open(f"berry.json", 'r')) # load config file
 hostName = cfg["hostName"]
 serverPort = cfg["serverPort"]
+ver = "v1.2.0"
+
+# Basic Logic to pull version from bot.py
+def openfile(file_path):
+    with open(file_path, "r") as file:
+        lines = file.readlines()
+    return lines
+
+try:
+    ncpolver = "v0.0.0 (Version Error)"
+    filee = openfile("bot.py")
+    for line in filee:
+        line = line.strip()
+        if line.startswith("ver = "):
+            ncpolver = line.replace("ver = ", "").replace("\"", "").replace("'", "")
+            break
+except Exception:
+    pass
 
 load_dotenv()  
 salt = os.getenv("salt")
@@ -55,6 +73,12 @@ head = """
         small {
           color: lightgray;
         }
+
+        .geeks {
+            font-size: 40px;
+            font-weight: bold;
+            color: green;
+        }
     </style>
 </head>
 """
@@ -63,16 +87,34 @@ htmlpage = """
 
 <body id="main">
     <h1>How old are you?</h1>
-    <a href="/submi1/!path!">
-        <button id="under-13">Under 13</button>
-    </a>
-    <a href="/submi2/!path!">
-        <button id="over-13">13 and over</button>
-    </a>
-    <br><br><small>By pressing either button, your IP address and browser fingerprint will be securely logged for verification purposes.</small>
-    <script>
 
-    sendFingerprint();
+    <form id="age-form" onsubmit="return false;">
+        <input type="radio" id="under-13" name="age" value="u" required>
+        <label for="under-13">Under 13</label><br>
+
+        <input type="radio" id="over-13" name="age" value="o">
+        <label for="over-13">13 and over</label><br><br>
+
+        <button type="submit">Submit</button>
+    </form>
+
+    <br>
+    <small>
+        By pressing submit, your IP address and browser fingerprint will be securely logged for verification purposes.
+    </small>
+
+    <script>
+        document.getElementById("age-form").addEventListener("submit", () => {
+            const choice = document.querySelector('input[name="age"]:checked');
+
+            if (!choice) return;
+
+            if (choice.value === "u") {
+                window.location.href = "/submi1/!path!";
+            } else {
+                window.location.href = "/submi2/!path!";
+            }
+        });
     </script>
 </body>
 
@@ -135,12 +177,13 @@ verified = f"""
 
 </html>
 """
+
 invalid = "<!DOCTYPE html><html><head><title>Verification Error</title></head><body><p>Error 400: Invalid Session</p></body></html>"
+
+info = f"""{head}<body>NeoCat Police Verification Integrated Web Server \"Raspberry\" {ver}<br><small>Running as part of NeoCat Police {ncpolver}</small><p>Raspberry is provided under the AGPL-3.0 Licence<br>Copyright (c) 2025 Lia Milenakos<br>Copyright (c) 2026 Mari Kepler<br>Credit to https://pythonbasics.org/webserver/ for Providing Minimal Python Server Example</p><br></body></html>"""
 
 def combine_fingerprints(header_fp, query_params):
     combined = {}
-    # header_fp might be a string or dict? 
-    # Let's assume header_fp is a dict for flexibility; else convert it to dict
     if isinstance(header_fp, dict):
         combined.update(header_fp)
     else:
@@ -290,6 +333,8 @@ def genhtmlpage(path, ip, fingerprint, query_params):
         save_db(guild_id, db)
 
         return verified.replace("!path!", path)
+    elif path.startswith("/info"):
+        return(info)
     else:
         if query_params:
             path = path[1:]
