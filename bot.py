@@ -87,7 +87,7 @@ default_join_messages = [
 
 TICKET_BUTTON_PREFIX = "ticket_button_wow_yay:"
 RASPBERRY_BUTTON_PREFIX = "raspberry_button_whoo_hooo:"
-ver = "v1.3.10"
+ver = "v1.3.11"
 defaultstatus = "NeoCat Police "+ver
 if "status" in cfg:
     defaultstatus = cfg["status"]
@@ -498,7 +498,10 @@ async def ping(ctx: commands.Context):
             isntinyc = False
         await ctx.response.defer(ephemeral=isntinyc)
         offset = 0
-        search = await bot.http.request(discord.http.Route("GET", f"/guilds/{ctx.guild.id}/messages/search?author_id={ctx.user.id}&has=image&sort_by=timestamp&sort_order=desc&offset={offset}"))
+        try:
+            search = await bot.http.request(discord.http.Route("GET", f"/guilds/{ctx.guild.id}/messages/search?author_id={ctx.user.id}&has=image&sort_by=timestamp&sort_order=desc&offset={offset}"))
+        except Exception:
+            return await ctx.followup.send("SLOW THE FUCK DOWN")
         total_results = search.get('total_results', 0)
 
         if total_results == 0:
@@ -506,9 +509,14 @@ async def ping(ctx: commands.Context):
             return
 
         pages = math.ceil(total_results/25)-1
+        if pages > 399:
+            pages = 399
         if pages > 0:
             offset = random.randint(0, pages)*25
-            search = await bot.http.request(discord.http.Route("GET", f"/guilds/{ctx.guild.id}/messages/search?author_id={ctx.user.id}&has=image&sort_by=timestamp&sort_order=desc&offset={offset}"))
+            try:
+                search = await bot.http.request(discord.http.Route("GET", f"/guilds/{ctx.guild.id}/messages/search?author_id={ctx.user.id}&has=image&sort_by=timestamp&sort_order=desc&offset={offset}"))
+            except Exception:
+                return await ctx.followup.send("SLOW THE FUCK DOWN")
         if not search or not 'messages' in search or not search['messages']:
             await ctx.followup.send(emojis["picardia_woozy"])
             return
@@ -522,7 +530,9 @@ async def ping(ctx: commands.Context):
         elif message['embeds']:
             lookfor = "embeds"
         else:
-            await ctx.followup.send("Hey, catch me later, I'll buy you an image.")
+            return await ctx.followup.send("Hey, catch me later, I'll buy you an image.")
+        if not message[lookfor]:
+            return await ctx.followup.send("Hey, catch me later, I'll buy you an image.")
         thing = random.choice(message[lookfor])
         url = thing.get('url', 'Hey, catch me later, I\'ll buy you an image.')
         await ctx.followup.send(str(url))
