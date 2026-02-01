@@ -1,13 +1,14 @@
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from dotenv import load_dotenv
-import json, time, os, base64, hashlib, difflib
+import json, time, os, base64, hashlib, difflib, sys
 from urllib.parse import urlparse, parse_qs
 from detection_engine.engine.detection_engine import detect_ip
+sys.stdout.reconfigure(line_buffering=True) # allows thing
 
 cfg = json.load(open(f"berry.json", 'r')) # load config file
 hostName = cfg["hostName"]
 serverPort = cfg["serverPort"]
-ver = "v1.2.0"
+ver = "v1.2.1"
 
 # Basic Logic to pull version from bot.py
 def openfile(file_path):
@@ -207,6 +208,8 @@ def is_tampered(fingerprint):
     
     if len(fingerprint['userAgent']) < 24:
         return True
+    if len(fingerprint['canvas']) < 100:
+        return True
     
     return False
 
@@ -383,7 +386,7 @@ class MyServer(BaseHTTPRequestHandler):
 
 if __name__ == "__main__":        
     webServer = ThreadingHTTPServer((hostName, serverPort), MyServer)
-    print("Server started http://%s:%s" % (hostName, serverPort))
+    print("Server started http://%s:%s" % (hostName, serverPort)+"/info")
 
     try:
         webServer.serve_forever()

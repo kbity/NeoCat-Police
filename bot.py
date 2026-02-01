@@ -1,4 +1,4 @@
-import discord, typing, json, enum, time, datetime, aiohttp, random, asyncio, re, syllables, traceback, io, os, sys, speech_recognition, subprocess, base64
+import discord, typing, json, enum, time, datetime, aiohttp, random, asyncio, re, syllables, traceback, io, os, sys, speech_recognition, subprocess, base64, math
 from discord import app_commands
 from discord import StickerFormatType
 from discord.ext import commands, tasks
@@ -41,10 +41,15 @@ defaultdctimeout = cfg["defaultdctimeout"]
 
 tips = cfg["tips"]
 
-enable_raspberry = cfg.get("raspberry", False)
+enable_raspberry = False 
 raspberry_url = None
-if enable_raspberry:
-    raspberry_url = cfg["raspberry_url"]
+raspberry_executable = cfg.get("raspberry_executable", "berry.py")
+if os.path.isfile(raspberry_executable):
+    enable_raspberry = cfg.get("raspberry", False) # Automatically disable Raspberry if raspberry_executable is missing
+    if enable_raspberry:
+        raspberry_url = cfg["raspberry_url"]
+elif cfg.get("raspberry", False):
+    print(f"{raspberry_executable} missing, disabling integrated web server!")
 
 if enableAI:
     # AI setup
@@ -82,7 +87,7 @@ default_join_messages = [
 
 TICKET_BUTTON_PREFIX = "ticket_button_wow_yay:"
 RASPBERRY_BUTTON_PREFIX = "raspberry_button_whoo_hooo:"
-ver = "v1.3.9"
+ver = "v1.3.10"
 defaultstatus = "NeoCat Police "+ver
 if "status" in cfg:
     defaultstatus = cfg["status"]
@@ -418,70 +423,109 @@ berry_process: asyncio.subprocess.Process | None = None
 async def run_berry():
     global berry_process
 
-    # If berry.py is already running, stop it first
-    if berry_process is not None:
-        if berry_process.returncode is None:
-            print("berry.py already running, terminating it…")
-            berry_process.terminate()
+    # Stop existing process
+    if berry_process and berry_process.returncode is None:
+        print(f"{raspberry_executable} already running, terminating it...")
+        berry_process.terminate()
+        try:
+            await asyncio.wait_for(berry_process.wait(), timeout=5)
+        except asyncio.TimeoutError:
+            print(f"{raspberry_executable} did not exit, killing it...")
+            berry_process.kill()
+            await berry_process.wait()
 
-            try:
-                await asyncio.wait_for(berry_process.wait(), timeout=5)
-            except asyncio.TimeoutError:
-                print("berry.py did not exit, killing it…")
-                berry_process.kill()
-                await berry_process.wait()
-
-        berry_process = None
-
-    # Start berry.py
-    print("Starting Raspberry...")
-    proc = await asyncio.create_subprocess_exec(
-        "python", "berry.py",
+    berry_process = await asyncio.create_subprocess_exec(
+        sys.executable, "-u", raspberry_executable,  # -u = unbuffered
         stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE
+        stderr=asyncio.subprocess.PIPE,
     )
-
-    berry_process = proc  # publish AFTER spawn
 
     async def read_stream(stream, tag):
-        async for line in stream:
-            print(f"[berry.py {tag}] {line.decode().rstrip()}")
+        while True:
+            line = await stream.readline()
+            if not line:
+                break
+            print(f"[{raspberry_executable} {tag}] {line.decode().rstrip()}")
 
-    # Read stdout + stderr concurrently
-    await asyncio.gather(
-        read_stream(berry_process.stdout, "stdout"),
-        read_stream(berry_process.stderr, "stderr"),
-    )
+    # Run log readers in background (REALTIME)
+    asyncio.create_task(read_stream(berry_process.stdout, "stdout"))
+    asyncio.create_task(read_stream(berry_process.stderr, "stderr"))
 
-    await proc.wait()
-    print("berry.py exited")
+    await berry_process.wait()
+    print(f"{raspberry_executable} exited")
 
-    if berry_process is proc:
-        berry_process = None
+    berry_process = None
 
 async def kill_berry():
     global berry_process
 
     if berry_process is not None:
         if berry_process.returncode is None:
-            print("berry.py already running, terminating it…")
+            print(f"{raspberry_executable} running, terminating it…")
             berry_process.terminate()
 
             try:
                 await asyncio.wait_for(berry_process.wait(), timeout=5)
             except asyncio.TimeoutError:
-                print("berry.py did not exit, killing it…")
+                print(f"{raspberry_executable} did not exit, killing it…")
                 berry_process.kill()
                 await berry_process.wait()
 
         berry_process = None
 
-    print("berry.py exited")
+    print(f"{raspberry_executable} exited")
 
 @tree.command(name="ping", description="tests roundtrip latency")
 async def ping(ctx: commands.Context):
     try:
         await ctx.response.send_message(f"{emojis['neocat_police']} Pong!! neocat brain has a latency of {round(bot.latency *1000)} ms")
+    except Exception as e:
+        await ctx.channel.send(f"500 internal server error\n-# {e}")
+
+@tree.command(name="memorybox", description="view a random image you sent in the past")
+async def ping(ctx: commands.Context):
+    try:
+        db = load_db(ctx.guild.id)
+        isntinyc = True
+        ycneed = db.get("memoryboxyc", False)
+        if ycneed:
+            if hasattr(ctx.channel, "parent"):
+                if type(ctx.channel.parent) == discord.ForumChannel:
+                    if str(ctx.channel.parent.id) in db["yapping_forums"]:
+                        if ctx.user == ctx.channel.owner:
+                            isntinyc = False
+        else:
+            isntinyc = False
+        await ctx.response.defer(ephemeral=isntinyc)
+        offset = 0
+        search = await bot.http.request(discord.http.Route("GET", f"/guilds/{ctx.guild.id}/messages/search?author_id={ctx.user.id}&has=image&sort_by=timestamp&sort_order=desc&offset={offset}"))
+        total_results = search.get('total_results', 0)
+
+        if total_results == 0:
+            await ctx.followup.send(f"no images {emojis['bwomp']}")
+            return
+
+        pages = math.ceil(total_results/25)-1
+        if pages > 0:
+            offset = random.randint(0, pages)*25
+            search = await bot.http.request(discord.http.Route("GET", f"/guilds/{ctx.guild.id}/messages/search?author_id={ctx.user.id}&has=image&sort_by=timestamp&sort_order=desc&offset={offset}"))
+        if not search or not 'messages' in search or not search['messages']:
+            await ctx.followup.send(emojis["picardia_woozy"])
+            return
+        search_sane = search['messages']
+        message = random.choice(search_sane)[0]
+        lookfor = None
+        if message['attachments'] and message['embeds']:
+            lookfor = random.choice(("attachments", "embeds"))
+        elif message['attachments']:
+            lookfor = "attachments"
+        elif message['embeds']:
+            lookfor = "embeds"
+        else:
+            await ctx.followup.send("Hey, catch me later, I'll buy you an image.")
+        thing = random.choice(message[lookfor])
+        url = thing.get('url', 'Hey, catch me later, I\'ll buy you an image.')
+        await ctx.followup.send(str(url))
     except Exception as e:
         await ctx.channel.send(f"500 internal server error\n-# {e}")
 
@@ -591,7 +635,7 @@ async def dice(ctx: commands.Context, sides: int = 6, count: int = 1):
             await ctx.response.send_message(f"{emojis['neocat_cry']} you have **0** dice")
             return
         if count > 100:
-            await ctx.response.send_message(f"{emojis['normal']} you try to roll the dice but **they scatter all over the place and you dont know what the fuck you're doing**")
+            await ctx.response.send_message(f"{emojis['normal']} you try to roll the dice but **they scatter all over the place and you dont know what the hell you're doing**")
             return
         if (sides > 1000) or sides == 0:
             c = ""
@@ -1511,36 +1555,36 @@ async def log_ticket(guild: discord.Guild, content: str, embeds: list = None):
 @tree.command(name="configure", description="you dont learn this in UX this bad in class")
 @commands.has_permissions(manage_guild=True)
 @discord.app_commands.default_permissions(manage_guild=True)
-@app_commands.describe(proporty="select the db property you wish to change")
-@app_commands.describe(bowleen="true or false")
-@app_commands.describe(stirng="WORDS!!")
-@app_commands.describe(integir="m a t h")
-async def configure(ctx: commands.Context, proporty: Literal["disableFreakouts", "disableAI", "disableUnyap", "DCTimeout", "DCTimeout_Bird", "DCRuleNumber", "appeal_message", "ai_automod_prompt", "antispam", "aiticketresponse", "aiticketprompt"], bowleen: bool = True, stirng: str = "Default", integir: int = 0):
+@app_commands.describe(property="select the db property you wish to change")
+@app_commands.describe(boolean="true or false")
+@app_commands.describe(string="WORDS!!")
+@app_commands.describe(integer="m a t h")
+async def configure(ctx: commands.Context, property: Literal["disableFreakouts", "disableAI", "disableUnyap", "DCTimeout", "DCTimeout_Bird", "DCRuleNumber", "appeal_message", "ai_automod_prompt", "antispam", "aiticketresponse", "aiticketprompt", "memoryboxyc"], boolean: bool = True, string: str = "Default", integer: int = 0):
     try:
         await ctx.response.defer(ephemeral=False)
-        boolprops = ["disableFreakouts", "disableAI", "disableUnyap", "antispam", "aiticketresponse"]
+        boolprops = ["disableFreakouts", "disableAI", "disableUnyap", "antispam", "aiticketresponse", "memoryboxyc"]
         strprops = ["appeal_message", "ai_automod_prompt", "aiticketprompt"]
         intprops = ["DCTimeout", "DCTimeout_Bird", "DCRuleNumber"]
 
         guild_id = str(ctx.guild.id)
         db = load_db(guild_id)
 
-        if proporty in boolprops:
-            val = bowleen
-        elif proporty in strprops:
-            val = stirng
-        elif proporty in intprops:
-            val = integir
+        if property in boolprops:
+            val = boolean
+        elif property in strprops:
+            val = string
+        elif property in intprops:
+            val = integer
         else:
             await ctx.followup.send(f"wtf")
             return
 
-        db[proporty] = val
+        db[property] = val
 
         save_db(guild_id, db)
 
-        await log_action(ctx.guild, f"`{proporty}` set to `{val}` by {ctx.user.mention}")
-        await ctx.followup.send(f"`{proporty}` set to `{val}`")
+        await log_action(ctx.guild, f"`{property}` set to `{val}` by {ctx.user.mention}")
+        await ctx.followup.send(f"`{property}` set to `{val}`")
     except Exception as e:
         await ctx.channel.send(f"500 internal server error\n-# {e}")
 
@@ -3085,7 +3129,7 @@ Now respond to this query from {garry}:
                         ailoglength[str(message.channel.id)].append(f"{name}: {trimmed_response}\n")
                     sent = None
 
-                    # remove fuckass empty lines the dumb llm adds sometimes
+                    # remove stupidass empty lines the dumb llm adds sometimes
                     trimmed_responsex2 = remove_blank_lines(trimmed_response)
 
                     try:
@@ -3122,7 +3166,7 @@ Now respond to this query from {garry}:
                 try:
                     channel = bot.get_channel(db["the_ncpol_press"])
                 except:
-                    print("getting channel error fuck you")
+                    print("getting channel error screw you")
                     return
                 async with channel.typing():
                     messages = [msg async for msg in message.channel.history(limit=20)]
@@ -3190,7 +3234,7 @@ Now respond to this query from {garry}:
 
     # afk stuff
     if str(message.author.id) in afkusers[str(message.guild.id)]:
-        if not str(message.type) == "MessageType.poll_result":
+        if not message.type == "MessageType.poll_result":
             afkusers[str(message.guild.id)].pop(str(message.author.id), None)
             await message.reply("welcome back!")
             member = message.guild.get_member(message.author.id)
@@ -3823,7 +3867,7 @@ Original message:
             exec(complete)
     
         if message.content.lower() == f"{cfg['prefix']}restart":
-            print("restart has been triggered...")
+            print("bot restart has been triggered...")
             await message.reply("restarting bot...")
             await kill_berry()
             os.execv(sys.executable, ['python'] + sys.argv)
