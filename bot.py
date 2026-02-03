@@ -87,7 +87,7 @@ default_join_messages = [
 
 TICKET_BUTTON_PREFIX = "ticket_button_wow_yay:"
 RASPBERRY_BUTTON_PREFIX = "raspberry_button_whoo_hooo:"
-ver = "v1.3.11"
+ver = "v1.3.12"
 defaultstatus = "NeoCat Police "+ver
 if "status" in cfg:
     defaultstatus = cfg["status"]
@@ -1808,7 +1808,7 @@ async def leaderboard(ctx: commands.Context):
         db["starboards"]["1"].setdefault("emoji", "⭐")
         amount = 10
         if "leaderboard" not in db or not db["leaderboard"]:
-            await ctx.response.send_message(f"no leaderboard {emojis['bwomp']}", ephemeral=True)
+            await ctx.followup.send(f"no leaderboard {emojis['bwomp']}", ephemeral=True)
             return
 
         sortedlb = dict(sorted(db["leaderboard"].items(), key=lambda item: item[1], reverse=True))
