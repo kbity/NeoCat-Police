@@ -87,7 +87,7 @@ default_join_messages = [
 
 TICKET_BUTTON_PREFIX = "ticket_button_wow_yay:"
 RASPBERRY_BUTTON_PREFIX = "raspberry_button_whoo_hooo:"
-ver = "v1.3.12"
+ver = "v1.3.13"
 defaultstatus = "NeoCat Police "+ver
 if "status" in cfg:
     defaultstatus = cfg["status"]
@@ -1748,11 +1748,11 @@ async def setstarboard(interaction: discord.Interaction, channel: discord.TextCh
             db["leaderboard"] = {}
 
         if starboard_id == 1:
-            if enable_leaderboard == "yes" and db["leaderboardEnabled"] == "False":
+            if enable_leaderboard == True and db["leaderboardEnabled"] == "False":
                 db["leaderboardEnabled"] = "True"
                 lb = " (leaderboard enabled for starboard 1 btw)"
 
-            if enable_leaderboard == "no" and db["leaderboardEnabled"] == "True":
+            if enable_leaderboard == False and db["leaderboardEnabled"] == "True":
                 db["leaderboardEnabled"] = "False"
                 lb = " (leaderboard disabled for starboard 1 btw)"
 
@@ -2017,10 +2017,8 @@ async def on_raw_reaction_add(payload):
                     webhook = webhook_obj
 
                 db.setdefault("leaderboardEnabled", "False")
-                if starboard_id == 1 and db["leaderboardEnabled"] == "True":
+                if starboard_id == "1" and db["leaderboardEnabled"] == "True":
                     db.setdefault("leaderboard", {})
-                    if str(message.author.id) not in db["leaderboard"] or not db["leaderboard"][str(message.author.id)]:
-                        db["leaderboard"][str(message.author.id)] = 0
                     db["leaderboard"].setdefault(str(message.author.id), 0)
                     db["leaderboard"][str(message.author.id)] += 1
                     save_db(payload.guild_id, db)
