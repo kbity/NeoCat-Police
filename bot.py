@@ -90,7 +90,7 @@ default_join_messages = [
 
 TICKET_BUTTON_PREFIX = "ticket_button_wow_yay:"
 RASPBERRY_BUTTON_PREFIX = "raspberry_button_whoo_hooo:"
-ver = "v1.3.14"
+ver = "v1.3.14.1"
 defaultstatus = "NeoCat Police "+ver
 if "status" in cfg:
     defaultstatus = cfg["status"]
@@ -501,12 +501,12 @@ async def ping(ctx: commands.Context):
         else:
             isntinyc = False
         await ctx.response.defer(ephemeral=isntinyc)
-        memoryboxpages.setdefault(str(ctx.user.id), 0)
-        pages = memoryboxpages[str(ctx.user.id)]
+        memoryboxpages.setdefault(str(ctx.guild.id), {})
+        memoryboxpages[str(ctx.guild.id)].setdefault(str(ctx.user.id), 0)
+        pages = memoryboxpages[str(ctx.guild.id)][str(ctx.user.id)]
         offset = random.randint(0, pages)*25
         try:
             search = await bot.http.request(discord.http.Route("GET", f"/guilds/{ctx.guild.id}/messages/search?author_id={ctx.user.id}&has=image&sort_by=timestamp&sort_order=desc&offset={offset}"))
-            print("API HIT")
         except Exception:
             return await ctx.followup.send("SLOW THE FUCK DOWN")
         total_results = search.get('total_results', 0)
@@ -522,8 +522,7 @@ async def ping(ctx: commands.Context):
             offset = random.randint(0, repages)*25
             try:
                 search = await bot.http.request(discord.http.Route("GET", f"/guilds/{ctx.guild.id}/messages/search?author_id={ctx.user.id}&has=image&sort_by=timestamp&sort_order=desc&offset={offset}"))
-                print("API HIT")
-                memoryboxpages[str(ctx.user.id)] = repages
+                memoryboxpages[str(ctx.guild.id)][str(ctx.user.id)] = repages
             except Exception:
                 return await ctx.followup.send("SLOW THE FUCK DOWN")
 
