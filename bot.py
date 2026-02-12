@@ -22,16 +22,19 @@ cfg = json.load(open(f"config.json", 'r')) # load config file
 intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
+berry_lock = asyncio.Lock()
+d = cmudict.dict()
+
+# these declare various global dicts
 afkusers = {}
 sleepycatch = {}
 bannersubmissions = {}
-spoilerspammedonce = {}
-d = cmudict.dict()
-berry_lock = asyncio.Lock()
+antispam = {}
 usernameCache = {}
 user_ai_ratelimits = {}
 catchesInChannels = {}
 catchesInBirdChannels = {}
+memoryboxpages = {}
 
 evaluser = cfg["evaluser"]
 kreisi_links = cfg["kreisilinks"]
@@ -87,7 +90,7 @@ default_join_messages = [
 
 TICKET_BUTTON_PREFIX = "ticket_button_wow_yay:"
 RASPBERRY_BUTTON_PREFIX = "raspberry_button_whoo_hooo:"
-ver = "v1.3.13"
+ver = "v1.3.14"
 defaultstatus = "NeoCat Police "+ver
 if "status" in cfg:
     defaultstatus = cfg["status"]
@@ -485,6 +488,7 @@ async def ping(ctx: commands.Context):
 @tree.command(name="memorybox", description="view a random image you sent in the past")
 async def ping(ctx: commands.Context):
     try:
+        global memoryboxpages
         db = load_db(ctx.guild.id)
         isntinyc = True
         ycneed = db.get("memoryboxyc", False)
@@ -497,9 +501,12 @@ async def ping(ctx: commands.Context):
         else:
             isntinyc = False
         await ctx.response.defer(ephemeral=isntinyc)
-        offset = 0
+        memoryboxpages.setdefault(str(ctx.user.id), 0)
+        pages = memoryboxpages[str(ctx.user.id)]
+        offset = random.randint(0, pages)*25
         try:
             search = await bot.http.request(discord.http.Route("GET", f"/guilds/{ctx.guild.id}/messages/search?author_id={ctx.user.id}&has=image&sort_by=timestamp&sort_order=desc&offset={offset}"))
+            print("API HIT")
         except Exception:
             return await ctx.followup.send("SLOW THE FUCK DOWN")
         total_results = search.get('total_results', 0)
@@ -508,31 +515,39 @@ async def ping(ctx: commands.Context):
             await ctx.followup.send(f"no images {emojis['bwomp']}")
             return
 
-        pages = math.ceil(total_results/25)-1
-        if pages > 399:
-            pages = 399
-        if pages > 0:
-            offset = random.randint(0, pages)*25
+        repages = math.ceil(total_results/25)-1 # recalcs pages based on new search, if it has more pages, do another search and update pages
+        if repages > 399:
+            repages = 399
+        if not (pages == repages):
+            offset = random.randint(0, repages)*25
             try:
                 search = await bot.http.request(discord.http.Route("GET", f"/guilds/{ctx.guild.id}/messages/search?author_id={ctx.user.id}&has=image&sort_by=timestamp&sort_order=desc&offset={offset}"))
+                print("API HIT")
+                memoryboxpages[str(ctx.user.id)] = repages
             except Exception:
                 return await ctx.followup.send("SLOW THE FUCK DOWN")
+
         if not search or not 'messages' in search or not search['messages']:
             await ctx.followup.send(emojis["picardia_woozy"])
             return
         search_sane = search['messages']
         message = random.choice(search_sane)[0]
         lookfor = None
-        if message['attachments'] and message['embeds']:
-            lookfor = random.choice(("attachments", "embeds"))
-        elif message['attachments']:
-            lookfor = "attachments"
-        elif message['embeds']:
-            lookfor = "embeds"
-        else:
-            return await ctx.followup.send("Hey, catch me later, I'll buy you an image.")
-        if not message[lookfor]:
-            return await ctx.followup.send("Hey, catch me later, I'll buy you an image.")
+        tries = 0
+        while lookfor is None:
+            if tries > 10:
+                return await ctx.followup.send('Hey, catch me later, I\'ll buy you an image.')
+            if message['attachments'] and message['embeds']:
+                lookfor = random.choice(("attachments", "embeds"))
+                break
+            elif message['attachments']:
+                lookfor = "attachments"
+                break
+            elif message['embeds']:
+                lookfor = "embeds"
+                break
+            message = random.choice(search_sane)[0]
+
         thing = random.choice(message[lookfor])
         url = thing.get('url', 'Hey, catch me later, I\'ll buy you an image.')
         await ctx.followup.send(str(url))
@@ -1264,7 +1279,7 @@ async def modlogs(ctx: commands.Context, messageid: str, newreason: str):
         after = message.content[last_bt+1:]
 
         await message.edit(content=f"{before}`{newreason}`{after}")
-        mlstatus = "\n -# failed to update modlogs"
+        mlstatus = "\n-# failed to update modlogs"
         if not "mod" in message.content and not len(mentions) != 2:
             logs = load_db(ctx.guild.id, "modlogs")
             logee = mentions[0]
@@ -1284,19 +1299,11 @@ async def modlogs(ctx: commands.Context, messageid: str, newreason: str):
                 actioni = "purge"
             elif "warned" in message.content:
                 actioni = "warn"
-            for action in check:
-                ind = check.index(action)
-                #debug
-                print(logs[logee]["punishments"][ind][0])
-                print(logger)
-                print(logs[logee]["punishments"][ind][1])
-                print(oldreason)
-                print(logs[logee]["punishments"][ind][2])
-                print(actioni)
 
+            for ind, action in enumerate(check):
                 if str(logs[logee]["punishments"][ind][0]) == logger and logs[logee]["punishments"][ind][1] == oldreason and logs[logee]["punishments"][ind][2] == actioni:
                     logs[logee]["punishments"][ind][1] = newreason
-                    mlstatus = "\n -# updated modlogs!"
+                    mlstatus = "\n-# updated modlogs!"
                     break
             save_db(ctx.guild.id, logs, "modlogs")
         await ctx.followup.send(f"ok{mlstatus}")
@@ -2930,12 +2937,22 @@ cheerio!
         db = load_db(message.author.id)
 
     if db.get("antispam"):
-        global spoilerspammedonce
-        spoilerspammedonce.setdefault(str(message.author.id), False)
-        if message.content.count('|') > 400:
-            if not spoilerspammedonce[str(message.author.id)]:
-                spoilerspammedonce[str(message.author.id)] = True
-            else:
+        global antispam
+        antispam.setdefault(str(message.author.id), {})
+        antispam[str(message.author.id)].setdefault("ch", [])
+        antispam[str(message.author.id)].setdefault("ct", "")
+        if message.content.count('https://') == 4:
+            if antispam[str(message.author.id)]["ct"] == "":
+                antispam[str(message.author.id)]["ct"] = message.content
+
+            if message.channel.id not in antispam[str(message.author.id)]["ch"]:
+                antispam[str(message.author.id)]["ch"].append(message.channel.id)
+
+            if antispam[str(message.author.id)]["ct"] != message.content:
+                antispam[str(message.author.id)]["ct"] = ""
+                antispam[str(message.author.id)]["ch"] = []
+
+            if len(antispam[str(message.author.id)]["ch"]) > 2:
                 try:
                     await message.author.send(f"hello nerd you might have been banned from {message.guild} for `acting Like a scam bot`. you cant appeal this, shouldnt have been stupid")
                 except Exception:
@@ -2946,7 +2963,7 @@ cheerio!
                 except Exception:
                     await log_spammy(message.guild, f"{message.author.mention} was NOT permanently banned because I lack perms.")
         else:
-            spoilerspammedonce[str(message.author.id)] = False
+            antispam[str(message.author.id)]["ch"] = []
 
 # AI LINE STARTS HERE
     if enableAI and not (db.get("disableAI") or db.get("no-ai", {}).get(str(message.channel.id))):
