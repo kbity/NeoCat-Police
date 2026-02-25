@@ -90,7 +90,7 @@ default_join_messages = [
 
 TICKET_BUTTON_PREFIX = "ticket_button_wow_yay:"
 RASPBERRY_BUTTON_PREFIX = "raspberry_button_whoo_hooo:"
-ver = "v1.3.14.1"
+ver = "v1.3.15"
 defaultstatus = "NeoCat Police "+ver
 if "status" in cfg:
     defaultstatus = cfg["status"]
@@ -1574,11 +1574,11 @@ async def log_ticket(guild: discord.Guild, content: str, embeds: list = None):
 @app_commands.describe(property="select the db property you wish to change")
 @app_commands.describe(boolean="true or false")
 @app_commands.describe(string="WORDS!!")
-@app_commands.describe(integer="m a t h")
-async def configure(ctx: commands.Context, property: Literal["disableFreakouts", "disableAI", "disableUnyap", "DCTimeout", "DCTimeout_Bird", "DCRuleNumber", "appeal_message", "ai_automod_prompt", "antispam", "aiticketresponse", "aiticketprompt", "memoryboxyc"], boolean: bool = True, string: str = "Default", integer: int = 0):
+@app_commands.describe(integer="m a t h (a number fyi)")
+async def configure(ctx: commands.Context, property: Literal["disableFreakouts", "disableAI", "disableUnyap", "DCTimeout", "DCTimeout_Bird", "DCRuleNumber", "appeal_message", "ai_automod_prompt", "antispam", "aiticketresponse", "aiticketprompt", "memoryboxyc", "DCmute", "DCmute_bird"], boolean: bool = True, string: str = "Default", integer: int = 0):
     try:
         await ctx.response.defer(ephemeral=False)
-        boolprops = ["disableFreakouts", "disableAI", "disableUnyap", "antispam", "aiticketresponse", "memoryboxyc"]
+        boolprops = ["disableFreakouts", "disableAI", "disableUnyap", "antispam", "aiticketresponse", "memoryboxyc", "DCmute", "DCmute_bird"]
         strprops = ["appeal_message", "ai_automod_prompt", "aiticketprompt"]
         intprops = ["DCTimeout", "DCTimeout_Bird", "DCRuleNumber"]
 
@@ -1867,6 +1867,30 @@ async def on_raw_reaction_remove(payload):
         await message.add_reaction(payload.emoji)
         
 # check if reaction removed is by ncpol, then re-react payload.emoji
+
+@bot.event
+async def on_voice_state_update(member, before, after):
+    if before.channel is None and after.channel is not None:
+        res = f"👋 {member} joined {after.channel.mention}"
+        db = load_db(after.channel.guild.id)
+    elif before.channel is not None and after.channel is None:
+        res = f"👋 {member} left {before.channel.mention}"
+        db = load_db(before.channel.guild.id)
+    elif before.channel != after.channel:
+        res = f"🔀 {member} moved from {before.channel.mention} to {after.channel.mention}"
+        db = load_db(before.channel.guild.id)
+    else:
+        return
+
+    channel_id = db.get("spammy_log_channel")
+    if channel_id is None:
+         channel_id = db.get("message_log_channel")
+    if channel_id is None:
+        return
+
+    channel = bot.get_channel(int(channel_id))
+    if channel:
+            await channel.send(res)
 
 @bot.event
 async def on_raw_reaction_add(payload):
@@ -2940,7 +2964,7 @@ cheerio!
         antispam.setdefault(str(message.author.id), {})
         antispam[str(message.author.id)].setdefault("ch", [])
         antispam[str(message.author.id)].setdefault("ct", "")
-        if message.content.count('https://') == 4:
+        if message.content.count('https://') == 4 or len(message.attachments) == 4:
             if antispam[str(message.author.id)]["ct"] == "":
                 antispam[str(message.author.id)]["ct"] = message.content
 
@@ -3466,11 +3490,21 @@ Now respond to this query from {garry}:
                     correctchannel = catchesInChannels[guild_id][str(catchuserId)]["catchChannel"] == message.channel.id
                     correcttime = round(time.time()) < catchesInChannels[guild_id][str(catchuserId)]["catchTimeout"]
                     mins = str(round(timeoutLength/6)/10).replace('.0', '')
+                    minsx4 = str(round((timeoutLength/6)/10)*4).replace('.0', '')
+
+                    diag = f"You caught a cat in another channel in the past {mins} minutes. Please gift this catch to the peson who caught the previous cat in this channel and don't double catch in the future."
+                    mutedstr = ""
+                    if "DCmute" in db and db["DCmute"]:
+                        mutedstr = " and has been muted"
+                        diag = f"You caught in another channel in the past {mins} minutes, you will now be muted for {minsx4}m. __Do not double catch in the future__"
 
                     if not correctchannel and correcttime:
-                        await message.reply(f":warning: __**{RuleH} - No double catching.**__\nYou caught a cat in another channel in the past {mins} minutes. Please gift this catch to the peson who caught the previous cat in this channel and don't double catch in the future.")
+                        if mutedstr:
+                            user = message.guild.get_member(int(catchuserId))
+                            await user.timeout(timedelta(seconds=timeoutLength*4), reason=f"double-catching")
+                        await message.reply(f":warning: <@{str(catchuserId)}> __**{RuleH} - No double catching.**__\n{diag}")
                         modlog(str(guild_id), str(catchuserId), bot.user.id, "double-catching", "warn")
-                        await log_action(message.guild, f"{username} tried catching a [cat](https://discord.com/channels/{message.guild.id}/{message.channel.id}/{message.id}) in <#{message.channel.id}> less than {mins} minutes after a catch in another channel.")
+                        await log_action(message.guild, f"{username} tried catching a [cat](https://discord.com/channels/{message.guild.id}/{message.channel.id}/{message.id}) in <#{message.channel.id}> less than {mins} minutes after a catch in another channel{mutedstr}.")
                     else:
                         catchesInChannels[guild_id][str(catchuserId)]["catchChannel"] = message.channel.id
                         catchesInChannels[guild_id][str(catchuserId)]["catchTimeout"] = kreisi_time
@@ -3521,9 +3555,19 @@ Now respond to this query from {garry}:
                     correctchannel = catchesInBirdChannels[guild_id][str(catchuserId)]["catchChannel"] == message.channel.id
                     correcttime = round(time.time()) < catchesInBirdChannels[guild_id][str(catchuserId)]["catchTimeout"]
                     mins = str(round(timeoutLength/6)/10).replace('.0', '')
+                    minsx4 = str(round((timeoutLength/6)/10)*4).replace('.0', '')
+
+                    diag = f"You caught a bird in another channel in the past {mins} minutes. Please gift this catch to the peson who caught the previous bird in this channel and don't double catch in the future."
+                    mutedstr = ""
+                    if "DCmute_bird" in db and db["DCmute_bird"]:
+                        mutedstr = " and has been muted"
+                        diag = f"You caught in another channel in the past {mins} minutes, you will now be muted for {minsx4}m. __Do not double catch in the future__"
 
                     if not correctchannel and correcttime:
-                        await message.reply(f":warning: __**{RuleH} - No double catching.**__\nYou caught a bird in another channel in the past {mins} minutes. Please gift this catch to the peson who caught the previous bird in this channel and don't double catch in the future.")
+                        if mutedstr:
+                            user = message.guild.get_member(int(catchuserId))
+                            await user.timeout(timedelta(seconds=timeoutLength*4), reason=f"double-catching")
+                        await message.reply(f":warning: <@{str(catchuserId)}> __**{RuleH} - No double catching.**__\n{diag}")
                         modlog(str(guild_id), str(catchuserId), bot.user.id, "double-catching", "warn")
                         await log_action(message.guild, f"{username} tried catching a [bird](https://discord.com/channels/{message.guild.id}/{message.channel.id}/{message.id}) in <#{message.channel.id}> less than {mins} minutes after a catch in another channel.")
                     else:
