@@ -101,7 +101,7 @@ default_join_messages = [
 
 TICKET_BUTTON_PREFIX = "ticket_button_wow_yay:"
 RASPBERRY_BUTTON_PREFIX = "raspberry_button_whoo_hooo:"
-ver = "v1.4.1"
+ver = "v1.4.2"
 defaultstatus = "NeoCat Police "+ver
 if "status" in cfg:
     defaultstatus = cfg["status"]
@@ -3764,7 +3764,10 @@ async def get_or_create_webhook(ctxchannel, db):
         try:
             webhooks = await ctxchannel.webhooks()
             webhook = discord.utils.get(webhooks, id=webhook_id)
-        except (discord.NotFound, discord.Forbidden):
+            if webhook.user:
+                if not webhook.user.id  == bot.user.id:
+                    raise Exception("not mine!")
+        except Exception:
             webhook = None
 
     if webhook is None:
