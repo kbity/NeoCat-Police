@@ -1751,6 +1751,11 @@ async def on_raw_reaction_add(payload):
             print(f"some error in getting emojiboard dest channel: {e}")
             continue
 
+        global processing_starboard_messages
+        if message.id in processing_starboard_messages:
+            continue
+        processing_starboard_messages.append(message.id)
+
         for reaction in message.reactions:
             emotypecustom = False
             if hasattr(reaction.emoji, "name"):
@@ -1787,11 +1792,6 @@ async def on_raw_reaction_add(payload):
                     continue
                 if reaction.count < threshold:
                     continue
-
-                global processing_starboard_messages
-                if message.id in processing_starboard_messages:
-                    continue
-                processing_starboard_messages.append(message.id)
 
                 try:
                     webhook, db = await get_or_create_webhook(starboard_channel, db)
@@ -1873,10 +1873,10 @@ async def on_raw_reaction_add(payload):
                         embeds=embeds
                     )
                     await message.add_reaction(payload.emoji)
-                    processing_starboard_messages.remove(message.id)
                 except Exception:
                     await asyncio.sleep(10) # wait for it to get better
                     await message.remove_reaction(payload.emoji)
+                processing_starboard_messages.remove(message.id)
 
 @tree.command(name="setforumtype", description="set a forum to a type")
 @commands.has_permissions(manage_guild=True)
