@@ -2638,7 +2638,9 @@ async def personality(ctx: commands.Context):
 async def on_app_command_error(ctx, error):
     traceback.print_exception(type(error), error, error.__traceback__)
     try:
-        await ctx.channel.send(f"500 internal server error\n-# {error}")
+        msg = await ctx.channel.send(f"500 internal server error\n-# {error}")
+        await asyncio.sleep(10)
+        await msg.delete()
     except Exception as e: # error handing my error handler
         print("The above error caused another god damn error:")
         traceback.print_exception(type(e), e, e.__traceback__)
