@@ -1640,8 +1640,11 @@ async def on_raw_reaction_add(payload):
         return
 
     guild_id = str(payload.guild_id)
-    db = load_db(guild_id)
     guild = bot.get_guild(payload.guild_id)
+    if not guild:
+        return
+
+    db = load_db(guild_id)
     db.setdefault("starboards", {})
 
     logging_channel_id = db.get("reaction_log_channel")
@@ -1656,9 +1659,6 @@ async def on_raw_reaction_add(payload):
     if not payload.emoji.id:
         unicodeblcok = f"{payload.emoji}\n"
         isunicode = 1
-
-    if not guild:
-        return
 
     channel = guild.get_channel(payload.channel_id)
     if channel is None:
@@ -1754,7 +1754,6 @@ async def on_raw_reaction_add(payload):
         global processing_starboard_messages
         if message.id in processing_starboard_messages:
             continue
-        processing_starboard_messages.append(message.id)
 
         for reaction in message.reactions:
             emotypecustom = False
@@ -1770,6 +1769,7 @@ async def on_raw_reaction_add(payload):
                 trigger = (str(reaction.emoji) == emoji)
 
             if trigger:
+                processing_starboard_messages.append(message.id)
                 quitit = False
                 async for user in reaction.users():
                     if user.id == bot.user.id:
@@ -1786,11 +1786,14 @@ async def on_raw_reaction_add(payload):
                         if ByOP:
                             await reaction.remove(user) # block self staring
                             quitit = True
+                            processing_starboard_messages.remove(message.id)
                             break
 
                 if quitit:
+                    processing_starboard_messages.remove(message.id)
                     continue
                 if reaction.count < threshold:
+                    processing_starboard_messages.remove(message.id)
                     continue
 
                 try:
@@ -1873,9 +1876,9 @@ async def on_raw_reaction_add(payload):
                         embeds=embeds
                     )
                     await message.add_reaction(payload.emoji)
-                except Exception:
-                    await asyncio.sleep(10) # wait for it to get better
-                    await message.remove_reaction(payload.emoji)
+                except Exception as e:
+                    print(e)
+                await asyncio.sleep(10) # wait before removing the message
                 processing_starboard_messages.remove(message.id)
 
 @tree.command(name="setforumtype", description="set a forum to a type")
