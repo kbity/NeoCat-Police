@@ -438,7 +438,7 @@ async def ping(ctx: commands.Context):
 
 @tree.command(name="modlogs", description="social credit")
 @discord.app_commands.default_permissions(view_audit_log=True)
-async def modlogs(ctx: commands.Context, user: discord.User, page: int = 1, filter: Literal["pwarn", "warn", "mute", "purge", "verified", "kick", "ban", "unban", "deny", "accept"] = None):
+async def modlogs(ctx: commands.Context, user: discord.User, page: int = 1, filter: Literal["pwarn", "warn", "mute", "purge", "verified", "kick", "ban", "unban", "deny", "accept", "jail", "unjail"] = None):
     memberId = str(user.id)
     amount = 20
     if page < 1:
