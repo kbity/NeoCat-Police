@@ -43,6 +43,8 @@ kreisi_links = cfg["kreisilinks"]
 enableAI = cfg["enableAI"]
 emojis = cfg["emojis"]
 
+punishments = cfg.get("punishments", ['5m', '1h', '6h', '48h', 'ban', 'pban'])
+
 # fallbacks for compatability with outdated config files
 if not "babymember" in emojis:
     emojis["babymember"] = emojis["memberjoin"]
@@ -101,7 +103,7 @@ default_join_messages = [
 
 TICKET_BUTTON_PREFIX = "ticket_button_wow_yay:"
 RASPBERRY_BUTTON_PREFIX = "raspberry_button_whoo_hooo:"
-ver = "v1.4.2"
+ver = "v1.4.3"
 defaultstatus = "NeoCat Police "+ver
 if "status" in cfg:
     defaultstatus = cfg["status"]
@@ -436,7 +438,7 @@ async def ping(ctx: commands.Context):
 
 @tree.command(name="modlogs", description="social credit")
 @discord.app_commands.default_permissions(view_audit_log=True)
-async def modlogs(ctx: commands.Context, user: discord.User, page: int = 1, filter: Literal["warn", "mute", "purge", "verified", "kick", "ban", "unban", "deny", "accept"] = None):
+async def modlogs(ctx: commands.Context, user: discord.User, page: int = 1, filter: Literal["pwarn", "warn", "mute", "purge", "verified", "kick", "ban", "unban", "deny", "accept"] = None):
     memberId = str(user.id)
     amount = 20
     if page < 1:
@@ -471,8 +473,8 @@ async def modlogs(ctx: commands.Context, user: discord.User, page: int = 1, filt
         punishment = ordered_punishments[x]
         if punishment[2] == "mute":
             punishments = punishments + f"**{punishment[2]}**\nby <@{punishment[0]}>\nfor `{punishment[1]}`\nuntil <t:{punishment[4]}:f>\non <t:{punishment[3]}:f>\n"
-        elif punishment[2] == "purge":
-            if len(punishment) < 5:
+        elif punishment[2] in ("purge", "pwarn"):
+            if punishment[2] == "purge" and len(punishment) < 5:
                 messages_fellback = "idk messages"
             else:
                 messages_fellback = punishment[4]
@@ -755,7 +757,7 @@ async def accept(ctx: commands.Context, user: discord.User, reason: str = "None"
         first_text_channel = next((c for c in main_guild.text_channels if c.permissions_for(main_guild.me).create_instant_invite), None)
         invite = await first_text_channel.create_invite(max_age=3600, max_uses=1, unique=True, reason="Appeal accepted")
         await user.send(
-            f"hello your appeal in `{main_guild.name}` has been accepted!\n"
+            f"hello your appeal in {main_guild.name} has been accepted!\n"
             f"reason: `{reason}`\n"
             f"join back using {invite.url}"
         )
@@ -805,9 +807,7 @@ async def deny(ctx: commands.Context, user: discord.User, reason: str = "None"):
 
     # DM the user
     try:
-        await user.send(
-            f"hello your appeal in `{main_guild.name}` was denied tough shit bro\nreason: `{reason}`."
-        )
+        await user.send(f"hello your appeal in {main_guild.name} was denied tough shit bro\nreason: `{reason}`.")
     except Exception as e:
         await print(f"Failed to DM user: {e}")
 
@@ -863,6 +863,17 @@ async def on_member_join(member: discord.Member):
                 except Exception as e:
                     print(f"Failed to send appeal context in {member.guild.name}: {e}")
             break  # Stop after first relevant match
+
+@bot.event
+async def on_member_remove(member):
+    db = load_db(member.guild.id)
+    jail_role_id = int(db.get("jail_role", None))  # replace with your jail role ID
+    if jail_role_id in [role.id for role in member.roles]:
+        await member.guild.ban(member, reason="Left while jailed")
+        try:
+            await member.send(f"hello nerd you were banned from {member.guild.name} because you left while jailed. you cant appeal this ban.")
+        except Exception as e:
+            print(f"Failed to DM user: {e}")
 
 @tree.command(name="kick", description="yeet")
 @discord.app_commands.default_permissions(kick_members=True)
@@ -1069,37 +1080,164 @@ async def modlogs(ctx: commands.Context, messageid: str, newreason: str):
         elif "purged" in message.content:
             actioni = "purge"
         elif "warned" in message.content:
-            actioni = "warn"
+            if message.content.endswith("(no punish)"):
+                actioni = "warn"
+            else:
+                actioni = "pwarn"
 
         for ind, action in enumerate(check):
-            if str(logs[logee]["punishments"][ind][0]) == logger and logs[logee]["punishments"][ind][1] == oldreason and logs[logee]["punishments"][ind][2] == actioni:
+
+            istypesemantic = (logs[logee]["punishments"][ind][2] == actioni)
+            if actioni == "pwarn": # fallback for compatability
+                istypesemantic = (logs[logee]["punishments"][ind][2] == "warn")
+
+            if str(logs[logee]["punishments"][ind][0]) == logger and logs[logee]["punishments"][ind][1] == oldreason and istypesemantic:
                 logs[logee]["punishments"][ind][1] = newreason
                 mlstatus = "\n-# updated modlogs!"
                 break
+
         save_db(ctx.guild.id, logs, "modlogs")
     await ctx.followup.send(f"ok{mlstatus}")
 
+@tree.command(name="unwarn", description="removes a warn")
+@discord.app_commands.default_permissions(moderate_members=True)
+@app_commands.describe(messageid="action log entry id or URL")
+async def modlogs(ctx: commands.Context, messageid: str):
+    await ctx.response.defer()
+    if "discord.com" in messageid:
+        messageId = messageid.rsplit("/", 1)[-1]
+    else:
+        messageId = messageid
+
+    db = load_db(ctx.guild.id)
+    channel_id = db.get("action_log_channel")
+    if channel_id is None:
+        return ctx.followup.send("is not possible")
+    logchannel = bot.get_channel(channel_id)
+    try:
+        message = await logchannel.fetch_message(messageId)
+    except Exception:
+        return await ctx.followup.send("couldn't get message")
+
+    if not "warned" in message.content:
+        return await ctx.followup.send("not a warn!")
+
+    oldreason = re.findall(r"`([^`]*)`", message.content)[0]
+    mentions = re.findall(r"<@(\d+)>", message.content)
+
+    first_bt = message.content.find("`")
+    last_bt = message.content.rfind("`")
+
+    before = message.content[:first_bt]
+    after = message.content[last_bt+1:]
+
+    mlstatus = "failed. check your message id or contact mari"
+    if not "mod" in message.content and not len(mentions) != 2:
+        logs = load_db(ctx.guild.id, "modlogs")
+        logee = mentions[0]
+        logger = mentions[1]
+        check = logs[logee]["punishments"]
+
+        for ind, action in enumerate(check):
+            istypesemantic = logs[logee]["punishments"][ind][2] in ("pwarn", "warn")
+            if str(logs[logee]["punishments"][ind][0]) == logger and logs[logee]["punishments"][ind][1] == oldreason and istypesemantic:
+                logs[logee]["punishments"].pop(ind)
+                mlstatus = "success"
+                save_db(ctx.guild.id, logs, "modlogs")
+                break
+            else:
+                mlstatus = "failed. check your message id or contact mari"
+                continue
+
+    await ctx.followup.send(f"{mlstatus}")
+    if mlstatus == "success":
+        await log_action(ctx.guild, f"<@{ctx.user.id}> undid a [warn](https://discord.com/channels/{ctx.guild.id}/{channel_id}/{messageId}).")
+
+def wtfispunishment(punishments, totalwarns):
+    if len(punishments) < totalwarns:
+        action = "blab"
+    else:
+        action = punishments[totalwarns-1]
+
+    if not action in ('ban', 'pban', 'blab'):
+        actionbang = action+" mute"
+    elif action == 'ban':
+        actionbang = "ban"
+    elif action == 'pban':
+        actionbang = "ban without appeal"
+    else:
+        actionbang = "..."
+
+    return actionbang, action
 
 @tree.command(name="warn", description="uh oh")
 @discord.app_commands.default_permissions(moderate_members=True)
 @app_commands.describe(user="THIS IS A WARNING")
 @app_commands.describe(reason="you did this?")
-async def warn(ctx: commands.Context, user: discord.User, reason: str = "None"):
+@app_commands.describe(punish="use fancypants warns with automatic progressive punishments")
+async def warn(ctx: commands.Context, user: discord.User, reason: str = "None", punish: bool = None):
+    await ctx.response.defer()
+    db = load_db(str(ctx.guild.id))
+    if punish is None:
+        punish = db.get("isPwarnDefault", False)
+
     memberId = str(user.id)
     logs = load_db(str(ctx.guild.id), "modlogs")
     totalwarns = 1
 
-    if memberId in logs and "punishments" in logs[memberId]:
-        for punishment in logs[memberId]["punishments"]:
-            if punishment[2] == "warn":
-                totalwarns += 1
+    if punish:
+        if memberId in logs and "punishments" in logs[memberId]:
+            for punishment in logs[memberId]["punishments"]:
+                if punishment[2] == "pwarn":
+                    if punishment[3] + 2592000 > round(time.time()):
+                        totalwarns += 1
+        p = "p"
+        totalwarnsque = f"#{totalwarns}"
+        actionbang, action = wtfispunishment(punishments, totalwarns)
+        next, _ = wtfispunishment(punishments, totalwarns+1)
+        dmres = f"""hello nerd you were warned in {ctx.guild.name} for `{reason}`.
+this is your warn **{totalwarnsque}** in the past 30 days.
+your punishment: {actionbang}.
+punishment on next warn: {next}. be careful."""
+        modlog(str(ctx.guild.id), str(user.id), ctx.user.id, reason, "pwarn", f"auto-punish: {actionbang}")
+    else:
+        totalwarnsque = "no punish"
+        modlog(str(ctx.guild.id), str(user.id), ctx.user.id, reason, "warn")
 
-    modlog(str(ctx.guild.id), str(user.id), ctx.user.id, reason, "warn")
-    await log_action(ctx.guild, f"{user.mention} was warned by {ctx.user.mention} for `{reason}`! (#{totalwarns})")
-    await ctx.response.send_message(f"{user.mention} was warned by {ctx.user.mention} for `{reason}`! (#{totalwarns})")
+    res = f"{user.mention} was warned by {ctx.user.mention} for `{reason}`! ({totalwarnsque})"
+
+    await log_action(ctx.guild, res)
+    await ctx.followup.send(res)
 
     try:
-        await user.send(f"hello nerd you were warned in {ctx.guild.name} for `{reason}`\nrepeated offences might result in mutes or bans.")
+        if punish:
+            if not (action in ('blab', 'pban')):
+                await user.send(dmres)
+
+            if not action in ('ban', 'pban', 'blab'):
+                await user.timeout(timedelta(seconds=convert_time_to_seconds(action)), reason=f"{reason}")
+            if action == 'ban':
+                server_id = db.get("appeal_server")
+                if server_id:
+                    try:
+                        appeal_guild = bot.get_guild(int(server_id))
+                        if appeal_guild and appeal_guild.text_channels:
+                            invite = await appeal_guild.text_channels[0].create_invite(max_age=3600, max_uses=1, unique=True, reason="ban appeal link")
+                            appealmsg = f"If you think this was unfair, you can appeal here: {invite.url}"
+                    except Exception as e:
+                        print(f"Failed to create appeal invite: {e}")
+                        appealmsg = db.get("appeal_message", "you can't appeal this ban.")
+                else:
+                    appealmsg = db.get("appeal_message", "you can't appeal this ban.")
+                await user.send(f"hello nerd you were banned from {ctx.guild.name} for repeated warnings. {appealmsg}")
+                await ctx.guild.ban(user, reason=reason, delete_message_seconds=(0))
+            if action == 'pban':
+                await user.send(f"hello nerd you were banned from {ctx.guild.name} for repeated warnings. you can't appeal this ban.")
+                await ctx.guild.ban(user, reason=reason, delete_message_seconds=(300)) # purge last 5 minutes
+            if action == 'blab':
+                await ctx.followup.send('Thank you. A team has been dispatched.')
+        else:
+            await user.send(f"hello nerd you were verbally warned in {ctx.guild.name} for `{reason}`\nrepeated offences might result in mutes or bans.")
     except Exception as e:
         print(f"Failed to send DM: {e}")
 @warn.error
@@ -1321,37 +1459,59 @@ async def log_ticket(guild: discord.Guild, content: str, embeds: list = None):
         if channel:
             await channel.send(content, allowed_mentions=discord.AllowedMentions.none(), embeds=embeds)
 
-@tree.command(name="configure", description="you dont learn this in UX this bad in class")
+# this eval generates the literal thing from the 3 types
+
+#ncpol!eval
+#booleans = ["disableFreakouts", "disableAI", "disableUnyap", "antispam", "aiticketresponse", "memoryboxyc", "DCmute_bird", "isPwarnDefault", "verifyOnUnjail"]
+#strings = ["appeal_message", "ai_automod_prompt", "aiticketprompt"]
+#integers =  ["DCTimeout_Bird", "DCRuleNumber"]
+
+#thecombine = []
+#for key in booleans:
+#    thecombine.append(f"{key} [boolean]")
+#for key in strings:
+#    thecombine.append(f"{key} [string]")
+#for key in integers:
+#    thecombine.append(f"{key} [integer]")
+
+#await message.reply(str(thecombine))
+
+@tree.command(name="configure", description="the UX is better but still terrible")
 @commands.has_permissions(manage_guild=True)
 @discord.app_commands.default_permissions(manage_guild=True)
 @app_commands.describe(property="select the db property you wish to change")
 @app_commands.describe(boolean="true or false")
 @app_commands.describe(string="WORDS!!")
 @app_commands.describe(integer="m a t h (a number fyi)")
-async def configure(ctx: commands.Context, property: Literal["disableFreakouts", "disableAI", "disableUnyap", "DCTimeout", "DCTimeout_Bird", "DCRuleNumber", "appeal_message", "ai_automod_prompt", "antispam", "aiticketresponse", "aiticketprompt", "memoryboxyc", "DCmute", "DCmute_bird"], boolean: bool = True, string: str = "Default", integer: int = 0):
+async def configure(ctx: commands.Context, property: Literal['disableFreakouts [boolean]', 'disableAI [boolean]', 'disableUnyap [boolean]', 'antispam [boolean]', 'aiticketresponse [boolean]', 'memoryboxyc [boolean]', 'DCmute_bird [boolean]', 'isPwarnDefault [boolean]', 'verifyOnUnjail [boolean]', 'appeal_message [string]', 'ai_automod_prompt [string]', 'aiticketprompt [string]', 'DCTimeout_Bird [integer]', 'DCRuleNumber [integer]'], boolean: bool = None, string: str = None, integer: int = None):
     await ctx.response.defer(ephemeral=False)
-    boolprops = ["disableFreakouts", "disableAI", "disableUnyap", "antispam", "aiticketresponse", "memoryboxyc", "DCmute", "DCmute_bird"]
-    strprops = ["appeal_message", "ai_automod_prompt", "aiticketprompt"]
-    intprops = ["DCTimeout", "DCTimeout_Bird", "DCRuleNumber"]
+    typekey = property.replace(' [boolean]', '').replace(' [string]', '').replace(' [integer]', '')
 
     guild_id = str(ctx.guild.id)
     db = load_db(guild_id)
 
-    if property in boolprops:
+    if property.endswith(' [boolean]'):
         val = boolean
-    elif property in strprops:
+    elif property.endswith(' [string]'):
         val = string
-    elif property in intprops:
+    elif property.endswith(' [integer]'):
         val = integer
     else:
         await ctx.followup.send(f"wtf")
         return
 
-    db[property] = val
-    save_db(guild_id, db)
+    if val is None:
+        cval = db.get(typekey)
+        if cval is None:
+            await ctx.followup.send(f"`{typekey}` is not set")
+        else:
+            await ctx.followup.send(f"`{typekey}` is set to `{cval}`")
+    else:
+        db[typekey] = val
+        save_db(guild_id, db)
 
-    await log_action(ctx.guild, f"`{property}` set to `{val}` by {ctx.user.mention}")
-    await ctx.followup.send(f"`{property}` set to `{val}`")
+        await log_action(ctx.guild, f"`{typekey}` set to `{val}` by {ctx.user.mention}")
+        await ctx.followup.send(f"`{typekey}` set to `{val}`")
 
 @bot.event
 async def on_message_delete(message: discord.Message):
@@ -1771,7 +1931,8 @@ async def on_raw_reaction_add(payload):
             if trigger:
                 processing_starboard_messages.append(message.id)
                 quitit = False
-                async for user in reaction.users():
+                users = [user async for user in reaction.users()]
+                for user in users:
                     if user.id == bot.user.id:
                         quitit = True
                         continue
@@ -1845,11 +2006,12 @@ async def on_raw_reaction_add(payload):
                     if ogmsg.content.startswith(f"-# ┌ {emojis['reply']}"):
                         omlmsg = " ".join(ogmsg.content.splitlines()[1:])
     
+                    omlmsg = omlmsg.replace('\n', ' ')
                     if len(omlmsg) > 128:
-                        omlmsg += "..."
+                        omlmsg[:125] += "..."
 
                     msglink = f"https://discord.com/channels/{message.guild.id}/{message.channel.id}/{message.reference.message_id}"
-                    reply_thing = f"-# ┌ {emojis['reply']} **@{str(ogmsg.author).replace('#0000', '')}**: [{omlmsg}]({msglink})\n"
+                    reply_thing = f"-# ┌ {emojis['reply']} **[@{str(ogmsg.author).replace('#0000', '')}]({msglink})**: {omlmsg}\n"
                     message_data = reply_thing + message_data
 
                 if message.interaction_metadata:
@@ -1944,19 +2106,21 @@ async def whitelist(ctx: commands.Context, user: discord.User, remove: bool = Fa
 @tree.command(name="setroletype", description="Set a role as a type of role (mod, underage, etc) for the bot")
 @discord.app_commands.default_permissions(manage_guild=True)
 @app_commands.describe(role_type="What kind of role", role="The role to set")
-async def setmodrole(ctx: commands.Context, role_type: Literal["admin", "mod", "minimod", "trial_mod", "functional_mod", "underage_role", "verified_role", "ai_role"], role: discord.Role, remove: bool = False):
+async def setmodrole(ctx: commands.Context, role_type: Literal["admin", "mod", "minimod", "trial_mod", "functional_mod", "underage", "verified", "ai", "jail"], role: discord.Role, remove: bool = False):
     await ctx.response.defer()
     guild_id = str(ctx.guild.id)
     db = load_db(guild_id)
 
-    notmodrole = role_type == "underage_role" or role_type == "verified_role" or role_type == "ai_role"
+    notmodrole = not (role_type == "admin" or "mod" in role_type)
+    if notmodrole:
+        role_type += "_role"
 
     if remove:
         if not notmodrole:
             db.setdefault("mod_roles", {})
             db["mod_roles"].pop(role_type, None)
         else:
-            db.setdefault(role_type == "null")
+            db.setdefault(role_type)
             db.pop(role_type, None)
         whatdidido = f"{ctx.user.mention} unset the `{role_type}` role."
     else:
@@ -1964,7 +2128,6 @@ async def setmodrole(ctx: commands.Context, role_type: Literal["admin", "mod", "
             db.setdefault("mod_roles", {})
             db["mod_roles"][role_type] = str(role.id)
         else:
-            db.setdefault(role_type == "null")
             db[role_type] = str(role.id)
         whatdidido = f"{ctx.user.mention} set {role.mention} as the `{role_type}` role."
 
@@ -1976,7 +2139,7 @@ async def setmodrole(ctx: commands.Context, role_type: Literal["admin", "mod", "
 @tree.command(name="setchanneltype", description="Set a channel as a type of role (slow catching, dementia, etc) for the bot")
 @discord.app_commands.default_permissions(manage_guild=True)
 @app_commands.describe(channel_type="What kind of role", channel="The channel to set")
-async def setchanneltype(ctx: commands.Context, channel_type: Literal["catching", "catching-birds", "haikus-allowed", "slow_catching", "dementia_chats", "the_ncpol_press", "one-message-go", "nonsense", "evil-dictator-chat", "banner-submissions", "no-ai", "spammy", "starboard-blacklisted"], channel: discord.TextChannel, remove: bool = False):
+async def setchanneltype(ctx: commands.Context, channel_type: Literal["catching-birds", "haikus-allowed", "slow_catching", "dementia_chats", "the_ncpol_press", "one-message-go", "nonsense", "evil-dictator-chat", "banner-submissions", "no-ai", "spammy", "starboard-blacklisted"], channel: discord.TextChannel, remove: bool = False):
     await ctx.response.defer(ephemeral=False)
     guild_id = str(ctx.guild.id)
     db = load_db(guild_id)
@@ -2499,16 +2662,11 @@ async def personality(ctx: commands.Context, mode: Literal["Clear", "Add", "Dele
         return
 
 @tree.command(name="verify", description="twitter checkmark chaotic good version")
-@discord.app_commands.default_permissions(manage_guild=True)
+@discord.app_commands.default_permissions(ban_members=True)
 @app_commands.describe(user="The user to verify", reason="The reason for this action")
 async def verify(ctx: commands.Context, user: discord.Member, reason: str = "None"):
     guild_id = str(ctx.guild.id)
     db = load_db(guild_id)
-
-    roles = db.get("mod_roles", {})
-    admin_role = ctx.guild.get_role(int(roles.get("admin"))) if roles.get("admin") else None
-
-    has_admin_role = admin_role in ctx.user.roles if admin_role else False
 
     verifyroleFile = db.get("verified_role", None)
 
@@ -2522,10 +2680,6 @@ async def verify(ctx: commands.Context, user: discord.Member, reason: str = "Non
         verifyrole = ctx.guild.get_role(int(verifyroleFile))
     except Exception:
         verifyrole = None
-
-    if not (ctx.user.guild_permissions.manage_guild or has_admin_role):
-        await ctx.response.send_message("403 forbidden", ephemeral=True)
-        return
 
     if not verifyrole:
         await ctx.response.send_message("Verification role not found.", ephemeral=True)
@@ -2548,6 +2702,75 @@ async def verify(ctx: commands.Context, user: discord.Member, reason: str = "Non
     if "welcome" in db:
         if db["welcome"]["mode"] == "OnVerify":
             await welcomeUser(guild_id, user.id, isunderage)
+
+@tree.command(name="jail", description="please accept my request to become a bus driver")
+@discord.app_commands.default_permissions(moderate_members=True)
+@app_commands.describe(user="The user to imprision", reason="The reason for this action")
+async def verify(ctx: commands.Context, user: discord.Member, reason: str = "None"):
+    guild_id = str(ctx.guild.id)
+    db = load_db(guild_id)
+
+    verifyroleFile = db.get("verified_role", None)
+    jailroleFile = db.get("jail_role", None)
+
+    verifyrole = ctx.guild.get_role(int(verifyroleFile))
+    jailrole = ctx.guild.get_role(int(jailroleFile))
+
+    if not jailrole:
+        await ctx.response.send_message("Jail role not found.", ephemeral=True)
+        return
+
+    await user.add_roles(jailrole, reason=reason)
+    if verifyrole:
+        await user.remove_roles(verifyrole, reason="Jailed")
+
+    log_message = f"{user.mention} was jailed by {ctx.user.mention} for `{reason}`."
+    send_message = f"{user.mention} was jailed by {ctx.user.mention} for `{reason}`."
+    dm_message = f"hello nerd you were jailed in {ctx.guild.name} for `{reason}`"
+
+    await log_action(ctx.guild, log_message)
+    modlog(str(ctx.guild.id), str(user.id), ctx.user.id, reason, "jail")
+
+    try:
+        await user.send(dm_message)
+    except Exception as e:
+        print(f"failed to DM, {e}")
+    await ctx.response.send_message(send_message)
+
+@tree.command(name="unjail", description="Let's go build dams and help the beavers")
+@discord.app_commands.default_permissions(moderate_members=True)
+@app_commands.describe(user="The user to free from prison", reason="The reason for this action")
+async def verify(ctx: commands.Context, user: discord.Member, reason: str = "None"):
+    guild_id = str(ctx.guild.id)
+    db = load_db(guild_id)
+
+    verifyroleFile = db.get("verified_role", None)
+    jailroleFile = db.get("jail_role", None)
+    verifyOnUnjail = db.get("verifyOnUnjail", False)
+
+    verifyrole = ctx.guild.get_role(int(verifyroleFile))
+    jailrole = ctx.guild.get_role(int(jailroleFile))
+
+    if not jailrole:
+        await ctx.response.send_message("Jail role not found.", ephemeral=True)
+        return
+
+    await user.remove_roles(jailrole, reason=reason)
+    if verifyrole and verifyOnUnjail:
+        await user.add_roles(verifyrole, reason="Jailed")
+
+    log_message = f"{user.mention} was unjailed by {ctx.user.mention} for `{reason}`."
+    send_message = f"{user.mention} was unjailed by {ctx.user.mention} for `{reason}`."
+    dm_message = f"hello nerd you were unjailed in {ctx.guild.name} for `{reason}`"
+
+    await log_action(ctx.guild, log_message)
+    modlog(str(ctx.guild.id), str(user.id), ctx.user.id, reason, "unjail")
+
+    try:
+        await user.send(dm_message)
+    except Exception as e:
+        print(f"failed to DM, {e}")
+    await ctx.response.send_message(send_message)
 
 # AI Stuff
 @tree.command(name="personality", description="sets AI personality")
@@ -2638,12 +2861,15 @@ async def personality(ctx: commands.Context):
 async def on_app_command_error(ctx, error):
     traceback.print_exception(type(error), error, error.__traceback__)
     try:
-        msg = await ctx.channel.send(f"500 internal server error\n-# {error}")
-        await asyncio.sleep(10)
-        await msg.delete()
+        await ctx.followup.send(f"500 internal server error\n-# {error}")
     except Exception as e: # error handing my error handler
-        print("The above error caused another god damn error:")
-        traceback.print_exception(type(e), e, e.__traceback__)
+        try:
+            msg = await ctx.channel.send(f"500 internal server error\n-# {error}")
+            await asyncio.sleep(10)
+            await msg.delete()
+        except Exception as e: # more error handing my error handler
+            print("The above error caused another god damn error:")
+            traceback.print_exception(type(e), e, e.__traceback__)
 
 @bot.event
 async def on_thread_create(thread: discord.Thread):
@@ -3114,7 +3340,7 @@ Now respond to this query from {garry}:
     # Check if it's a slow catching channel
     if db.get("slow_catching", {}).get(channel_id):
         global sleepycatch
-        sentbycatbotorbird = 0
+        sentbycatbotorbird = False
         if message.author.name == "Cat Bot" and message.author.bot:
             if "cat has appeared" in message.content.lower():
                 sentbycatbotorbird = 1
@@ -3123,7 +3349,7 @@ Now respond to this query from {garry}:
             if message.embeds:
                 embed = message.embeds[0]
                 if embed.description and embed.description.strip() == 'Type "bird" to catch it!':
-                    sentbycatbotorbird = 1
+                    sentbycatbotorbird = True
 
         if sentbycatbotorbird:
             perms = message.channel.overwrites_for(message.guild.default_role)
@@ -3134,108 +3360,7 @@ Now respond to this query from {garry}:
             sleepycatch[str(message.channel.id)]["TTL"] = 3600
             sleepycatch[str(message.channel.id)]["msgid"] = sendmsg.id
 
-    # Check if it's a catching channel
-    if db.get("catching", {}).get(channel_id):
-        if message.author.name == "Cat Bot" and message.author.bot:
-            catchdetected = False
-            word_detected = "idk!"
-            linect = 0
-            catchdetected = False
-            messagelower = message.content.lower()
-            cheksec = "seconds" in message.content
-            chekmin = "minutes" in message.content
-            chekhou = "hours" in message.content
-            chekday = "days" in message.content
-
-            if not (cheksec or chekmin or chekhou or chekday):
-                return
-            catchdetected = True
-
-            catchline = message.content
-            yeahokliberal = catchline.split()
-            excluded_chars = "~!@#$%^&*()+{}:\"<>?-=[];',/`QAZWSXEDCRFVTGBYHNUJMIKOLP"
-            evilstuff = list(excluded_chars)
-
-            distilled_catch = yeahokliberal[:]
-            for qweyu in yeahokliberal:
-                for funny in evilstuff:
-                    if (funny in qweyu):
-                        if qweyu in distilled_catch:
-                            distilled_catch.remove(qweyu)
-            xx_catch = []
-
-            for word in distilled_catch:
-                xx_catch.append(word.replace("\\", ""))
-
-            xxx_catch = []
-
-            for word in xx_catch:
-                if word in usernameCache:
-                    xxx_catch.append(word)
-
-            okayStopDistillingIt = []
-
-            for word in xxx_catch:
-                if not word in okayStopDistillingIt:
-                    okayStopDistillingIt.append(word)
-
-            if len(okayStopDistillingIt) > 1:
-                await message.reply(f"confict in double distill, 2 cached usernames in catch message. this isnt funny.")
-                return
-
-            if len(okayStopDistillingIt) < 1:
-                await message.reply(f"QHAR?!?!?!?!?!")
-                return
-
-            username = okayStopDistillingIt[0]
-
-            if catchdetected:
-                if username == "Unknown Catcher":
-                    await message.channel.send(f"idk who tf caught the cat (please report this bug if encountered, include catch message) (expected if custom message is in use)")
-                else:
-                    catchuserId = None
-                    if not username in usernameCache:
-                        await message.channel.send(f"idk who tf {username} is (please report this bug if encountered, include catch message)", allowed_mentions=discord.AllowedMentions.none())
-                        return
-                    else:
-                        catchuserId = usernameCache[username]
-                    timeoutLength = defaultdctimeout
-                    if "DCTimeout" in db:
-                        timeoutLength = db["DCTimeout"]
-
-                    RuleH = "The Rule"
-                    if "DCRuleNumber" in db:
-                        RuleH = f"Rule {db['DCRuleNumber']}"
-
-                    catchesInChannels.setdefault(guild_id, {})
-                    catchesInChannels[guild_id].setdefault(str(catchuserId), {})
-                    catchesInChannels[guild_id][str(catchuserId)].setdefault("catchChannel", message.channel.id)
-                    kreisi_time = round(time.time()) + timeoutLength
-                    catchesInChannels[guild_id][str(catchuserId)].setdefault("catchTimeout", kreisi_time)
-                    correctchannel = catchesInChannels[guild_id][str(catchuserId)]["catchChannel"] == message.channel.id
-                    correcttime = round(time.time()) < catchesInChannels[guild_id][str(catchuserId)]["catchTimeout"]
-                    mins = str(round(timeoutLength/6)/10).replace('.0', '')
-                    minsx4 = str(round((timeoutLength/6)/10)*4).replace('.0', '')
-
-                    diag = f"You caught a cat in another channel in the past {mins} minutes. Please gift this catch to the peson who caught the previous cat in this channel and don't double catch in the future."
-                    mutedstr = ""
-                    if "DCmute" in db and db["DCmute"]:
-                        mutedstr = " and has been muted"
-                        diag = f"You caught in another channel in the past {mins} minutes, you will now be muted for {minsx4}m. __Do not double catch in the future__"
-
-                    if not correctchannel and correcttime:
-                        if mutedstr:
-                            user = message.guild.get_member(int(catchuserId))
-                            await user.timeout(timedelta(seconds=timeoutLength*4), reason=f"double-catching")
-                        await message.reply(f":warning: <@{str(catchuserId)}> __**{RuleH} - No double catching.**__\n{diag}")
-                        modlog(str(guild_id), str(catchuserId), bot.user.id, "double-catching", "warn")
-                        await log_action(message.guild, f"{username} tried catching a [cat](https://discord.com/channels/{message.guild.id}/{message.channel.id}/{message.id}) in <#{message.channel.id}> less than {mins} minutes after a catch in another channel{mutedstr}.")
-                    else:
-                        catchesInChannels[guild_id][str(catchuserId)]["catchChannel"] = message.channel.id
-                        catchesInChannels[guild_id][str(catchuserId)]["catchTimeout"] = kreisi_time
-
-    # making use of functions ❌️❌️❌️
-    # adding the code twice ✅️✅️✅️✅️✅️✅️✅️✅️✅️💯️💯️💯️💯️💯️
+    # yeahh there goes a bunch of hard work :aysm:
 
     if db.get("catching-birds", {}).get(channel_id):
         if message.author.name == "bird" and message.author.bot:
@@ -3375,8 +3500,9 @@ Now respond to this query from {garry}:
                         if ogmsg.content.startswith(f"-# ┌ {emojis['reply']}"):
                             omlmsg = " ".join(ogmsg.content.splitlines()[1:])
     
+                        omlmsg = omlmsg.replace('\n', ' ')
                         if len(omlmsg) > 128:
-                            omlmsg += "..."
+                            omlmsg[:125] += "..."
 
                         msglink = f"https://discord.com/channels/{message.guild.id}/{message.channel.id}/{message.reference.message_id}"
                         reply_thing = f"-# ┌ {emojis['reply']} **@{str(ogmsg.author).replace('#0000', '')}**: [{omlmsg}]({msglink})\n"
@@ -3651,7 +3777,7 @@ def modlog(guildId, memberIdi, issuerId, reason, punishment, until=0):
     if memberId not in logs or not logs[memberId]:
         logs[memberId] = {}
     logs[memberId].setdefault("punishments", [])
-    if punishment == "purge":
+    if punishment in ("purge", "pwarn"): # these use until field for misc data
         logs[memberId]["punishments"].append([issuerId, reason, punishment, timestamp, until])
     else:
         logs[memberId]["punishments"].append([issuerId, reason, punishment, timestamp, (timestamp+until)])
