@@ -107,7 +107,7 @@ default_join_messages = [
 
 TICKET_BUTTON_PREFIX = "ticket_button_wow_yay:"
 RASPBERRY_BUTTON_PREFIX = "raspberry_button_whoo_hooo:"
-ver = "v1.4.4"
+ver = "v1.4.5"
 defaultstatus = "NeoCat Police "+ver
 if "status" in cfg:
     defaultstatus = cfg["status"]
@@ -2679,7 +2679,7 @@ async def verify(ctx: commands.Context, user: discord.Member, reason: str = "Non
         verifyrole = None
 
     if not verifyrole:
-        await ctx.response.send_message("Verification role not found.", ephemeral=True)
+        await ctx.followup.send("Verification role not found.", ephemeral=True)
         return
 
     await user.add_roles(verifyrole, reason=reason)
@@ -2716,7 +2716,7 @@ async def jail(ctx: commands.Context, user: discord.Member, reason: str = "None"
     jailrole = ctx.guild.get_role(int(jailroleFile))
 
     if not jailrole:
-        await ctx.response.send_message("Jail role not found.", ephemeral=True)
+        await ctx.followup.send("Jail role not found.", ephemeral=True)
         return
 
     await user.add_roles(jailrole, reason=reason)
@@ -2752,7 +2752,7 @@ async def unjail(ctx: commands.Context, user: discord.Member, reason: str = "Non
     jailrole = ctx.guild.get_role(int(jailroleFile))
 
     if not jailrole:
-        await ctx.response.send_message("Jail role not found.", ephemeral=True)
+        await ctx.followup.send("Jail role not found.", ephemeral=True)
         return
 
     await user.remove_roles(jailrole, reason=reason)
