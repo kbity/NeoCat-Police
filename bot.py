@@ -45,6 +45,10 @@ emojis = cfg["emojis"]
 
 punishments = cfg.get("punishments", ['5m', '1h', '6h', '48h', 'ban', 'pban'])
 
+autocomplete = cfg.get("autocomplete", ['Disrespectful/rude behaviour', 'Spam', 'Advertising', 'Slurs', 'Starting/engaging in drama', 'Political discussions', 'NSFW/Sexual messages', 'Transphobia/homophobia', 'Refusing to speak English', 'Underage (you need to be 13+ to use Discord)'])
+async def reason_autocomplete(interaction: discord.Interaction, current: str): # attach these to autocompleter
+        return [app_commands.Choice(name=choice, value=choice) for choice in autocomplete if current.lower() in choice.lower()][:25]
+
 # fallbacks for compatability with outdated config files
 if not "babymember" in emojis:
     emojis["babymember"] = emojis["memberjoin"]
@@ -103,7 +107,7 @@ default_join_messages = [
 
 TICKET_BUTTON_PREFIX = "ticket_button_wow_yay:"
 RASPBERRY_BUTTON_PREFIX = "raspberry_button_whoo_hooo:"
-ver = "v1.4.3"
+ver = "v1.4.4"
 defaultstatus = "NeoCat Police "+ver
 if "status" in cfg:
     defaultstatus = cfg["status"]
@@ -558,6 +562,7 @@ async def setbutton(ctx: commands.Context, message: str = "sample text", type: L
 @app_commands.describe(user="the nerd to yeet")
 @app_commands.describe(reason="reason (e.g. memes in general)")
 @app_commands.describe(purge="how many hours of messages do we remove (168 max)")
+@discord.app_commands.autocomplete(reason=reason_autocomplete)
 async def ban(ctx: commands.Context, user: discord.User, reason: str = "None", appeal: bool = True, purge: int = 0):
     guild_id = str(ctx.guild.id)
     db = load_db(guild_id)
@@ -879,6 +884,7 @@ async def on_member_remove(member):
 @discord.app_commands.default_permissions(kick_members=True)
 @app_commands.describe(user="the nerd to yeet")
 @app_commands.describe(reason="reason (e.g. memes in general)")
+@discord.app_commands.autocomplete(reason=reason_autocomplete)
 async def kick(ctx: commands.Context, user: discord.User, reason: str = "None"):
     # Define the button
     button = discord.ui.Button(label="Confirm", style=discord.ButtonStyle.secondary)
@@ -952,6 +958,7 @@ async def kick_error(ctx, error):
 @app_commands.describe(user="your free trial of talking has ended")
 @app_commands.describe(lengh="lengh of no yap perms (e.g. 7d)")
 @app_commands.describe(reason="i muted you becuz your annoying")
+@discord.app_commands.autocomplete(reason=reason_autocomplete)
 async def mute(ctx: commands.Context, user: discord.User, lengh: str, reason: str = "None"):
     await ctx.response.defer()
     guild_id = str(ctx.guild.id)
@@ -1075,6 +1082,10 @@ async def modlogs(ctx: commands.Context, messageid: str, newreason: str):
             actioni = "unban"
         elif "banned" in message.content:
             actioni = "ban"
+        elif "jailed" in message.content:
+            actioni = "jail"
+        elif "unjailed" in message.content:
+            actioni = "unjail"
         elif "kicked" in message.content:
             actioni = "kick"
         elif "purged" in message.content:
@@ -1153,28 +1164,12 @@ async def modlogs(ctx: commands.Context, messageid: str):
     if mlstatus == "success":
         await log_action(ctx.guild, f"<@{ctx.user.id}> undid a [warn](https://discord.com/channels/{ctx.guild.id}/{channel_id}/{messageId}).")
 
-def wtfispunishment(punishments, totalwarns):
-    if len(punishments) < totalwarns:
-        action = "blab"
-    else:
-        action = punishments[totalwarns-1]
-
-    if not action in ('ban', 'pban', 'blab'):
-        actionbang = action+" mute"
-    elif action == 'ban':
-        actionbang = "ban"
-    elif action == 'pban':
-        actionbang = "ban without appeal"
-    else:
-        actionbang = "..."
-
-    return actionbang, action
-
 @tree.command(name="warn", description="uh oh")
 @discord.app_commands.default_permissions(moderate_members=True)
 @app_commands.describe(user="THIS IS A WARNING")
 @app_commands.describe(reason="you did this?")
 @app_commands.describe(punish="use fancypants warns with automatic progressive punishments")
+@discord.app_commands.autocomplete(reason=reason_autocomplete)
 async def warn(ctx: commands.Context, user: discord.User, reason: str = "None", punish: bool = None):
     await ctx.response.defer()
     db = load_db(str(ctx.guild.id))
@@ -1314,6 +1309,7 @@ async def ban_error(ctx, error):
 @discord.app_commands.default_permissions(manage_messages=True)
 @app_commands.describe(purge="how many messages do we remove (caps at 1000)")
 @app_commands.describe(user="member to purge")
+@discord.app_commands.autocomplete(reason=reason_autocomplete)
 async def purge(ctx, purge: int, user: discord.User = None, reason: str = "None"):
     if purge < 0:
         await ctx.response.send_message(random.choice(kreisi_links))
@@ -2559,7 +2555,7 @@ async def afk(ctx: commands.Context, note: str = "This user is AFK!", timer: int
 @app_commands.describe(mode="on join, on verify, or disable")
 @app_commands.describe(emoji=":emoji_13:")
 @app_commands.describe(channel="channel for messages, leave blank to disable")
-async def personality(ctx: commands.Context, mode: Literal["Disabled", "OnJoin", "OnVerify"] = "Disabled", emoji: str = "Default", underage_emoji: str = "Default", channel: discord.TextChannel = None):
+async def welcomecfg(ctx: commands.Context, mode: Literal["Disabled", "OnJoin", "OnVerify"] = "Disabled", emoji: str = "Default", underage_emoji: str = "Default", channel: discord.TextChannel = None):
     db = load_db(str(ctx.guild.id))
     global default_join_emoji
     global default_join_emoji_underage
@@ -2603,7 +2599,7 @@ async def personality(ctx: commands.Context, mode: Literal["Disabled", "OnJoin",
 @app_commands.describe(mode="what thing you are doing??")
 @app_commands.describe(start="start for message (put these in quotes), or index for deletion")
 @app_commands.describe(end="end for message (put these in quotes). only used in add mode.")
-async def personality(ctx: commands.Context, mode: Literal["Clear", "Add", "Delete", "Pull", "List"] = "List", start: str = "Default", end: str = "Default"):
+async def welcome(ctx: commands.Context, mode: Literal["Clear", "Add", "Delete", "Pull", "List"] = "List", start: str = "Default", end: str = "Default"):
     db = load_db(str(ctx.guild.id))
     if not mode == "List":
         db.setdefault("welcome", {}).setdefault("messages", [[f"Welcome to {ctx.guild.name}, ", "! Enjoy your stay."]])
@@ -2665,12 +2661,13 @@ async def personality(ctx: commands.Context, mode: Literal["Clear", "Add", "Dele
 @discord.app_commands.default_permissions(ban_members=True)
 @app_commands.describe(user="The user to verify", reason="The reason for this action")
 async def verify(ctx: commands.Context, user: discord.Member, reason: str = "None"):
+    await ctx.response.defer()
     guild_id = str(ctx.guild.id)
     db = load_db(guild_id)
 
-    verifyroleFile = db.get("verified_role", None)
+    verifyroleFile = db.get("verified_role", 0)
 
-    underageFile = db.get("underage_role", None)
+    underageFile = db.get("underage_role", 0)
     isunderage = False
     if underageFile:
         if discord.utils.get(user.roles, id=int(underageFile)):
@@ -2697,7 +2694,7 @@ async def verify(ctx: commands.Context, user: discord.Member, reason: str = "Non
         await user.send(dm_message)
     except Exception as e:
         print(f"failed to DM, {e}")
-    await ctx.response.send_message(send_message)
+    await ctx.followup.send(send_message)
 
     if "welcome" in db:
         if db["welcome"]["mode"] == "OnVerify":
@@ -2706,12 +2703,14 @@ async def verify(ctx: commands.Context, user: discord.Member, reason: str = "Non
 @tree.command(name="jail", description="please accept my request to become a bus driver")
 @discord.app_commands.default_permissions(moderate_members=True)
 @app_commands.describe(user="The user to imprision", reason="The reason for this action")
-async def verify(ctx: commands.Context, user: discord.Member, reason: str = "None"):
+@discord.app_commands.autocomplete(reason=reason_autocomplete)
+async def jail(ctx: commands.Context, user: discord.Member, reason: str = "None"):
+    await ctx.response.defer()
     guild_id = str(ctx.guild.id)
     db = load_db(guild_id)
 
-    verifyroleFile = db.get("verified_role", None)
-    jailroleFile = db.get("jail_role", None)
+    verifyroleFile = db.get("verified_role", 0)
+    jailroleFile = db.get("jail_role", 0)
 
     verifyrole = ctx.guild.get_role(int(verifyroleFile))
     jailrole = ctx.guild.get_role(int(jailroleFile))
@@ -2735,17 +2734,18 @@ async def verify(ctx: commands.Context, user: discord.Member, reason: str = "Non
         await user.send(dm_message)
     except Exception as e:
         print(f"failed to DM, {e}")
-    await ctx.response.send_message(send_message)
+    await ctx.followup.send(send_message)
 
 @tree.command(name="unjail", description="Let's go build dams and help the beavers")
 @discord.app_commands.default_permissions(moderate_members=True)
 @app_commands.describe(user="The user to free from prison", reason="The reason for this action")
-async def verify(ctx: commands.Context, user: discord.Member, reason: str = "None"):
+async def unjail(ctx: commands.Context, user: discord.Member, reason: str = "None"):
+    await ctx.response.defer()
     guild_id = str(ctx.guild.id)
     db = load_db(guild_id)
 
-    verifyroleFile = db.get("verified_role", None)
-    jailroleFile = db.get("jail_role", None)
+    verifyroleFile = db.get("verified_role", 0)
+    jailroleFile = db.get("jail_role", 0)
     verifyOnUnjail = db.get("verifyOnUnjail", False)
 
     verifyrole = ctx.guild.get_role(int(verifyroleFile))
@@ -2770,7 +2770,7 @@ async def verify(ctx: commands.Context, user: discord.Member, reason: str = "Non
         await user.send(dm_message)
     except Exception as e:
         print(f"failed to DM, {e}")
-    await ctx.response.send_message(send_message)
+    await ctx.followup.send(send_message)
 
 # AI Stuff
 @tree.command(name="personality", description="sets AI personality")
@@ -3847,6 +3847,23 @@ def convert_time_to_seconds(time_str, slowmodecontext: bool = False):
 
 def canintodigit(val):
     return val.isdigit() or (val.startswith('-') and val[1:].isdigit())
+
+def wtfispunishment(punishments, totalwarns):
+    if len(punishments) < totalwarns:
+        action = "blab"
+    else:
+        action = punishments[totalwarns-1]
+
+    if not action in ('ban', 'pban', 'blab'):
+        actionbang = action+" mute"
+    elif action == 'ban':
+        actionbang = "ban"
+    elif action == 'pban':
+        actionbang = "ban without appeal"
+    else:
+        actionbang = "..."
+
+    return actionbang, action
 
 async def query_ollama(prompt):
     global enableAI
