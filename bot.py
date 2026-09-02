@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import discord, typing, json, enum, time, datetime, aiohttp, random, asyncio, re, syllables, traceback, io, os, sys, speech_recognition, subprocess, base64, math, pdqhash, cv2
 from discord import app_commands
 from discord import StickerFormatType
@@ -129,7 +131,7 @@ os.makedirs("snapins", exist_ok=True)
 if enable_raspberry:
     os.makedirs("registry", exist_ok=True)
     with open(f"berry.json", 'r') as q:
-        raspcfg = json.load()
+        raspcfg = json.load(q)
         https_enabled = raspcfg.get("enableHTTPS", False)
 
 bot = commands.Bot(command_prefix=cfg["prefix"], intents=intents)
@@ -4189,7 +4191,10 @@ async def soft_ban(message: discord.Message, reason: str, spamlog: bool = False)
     except Exception:
         await log_action(message.guild, f"{message.author.mention} was NOT soft-banned because I lack perms.")
 
-async def send_fakemsg_webhook(db, message, channel, view = discord.ui.View(), files = None):
+async def send_fakemsg_webhook(db, message, channel, view = None, files = None):
+    if view is None:
+        view = discord.ui.View()
+
     chan = channel
     thd = None
     if isinstance(chan, discord.Thread):
