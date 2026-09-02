@@ -1,4 +1,4 @@
-import discord, typing, json, enum, time, datetime, aiohttp, random, asyncio, re, syllables, traceback, io, os, sys, speech_recognition, subprocess, base64, math
+import discord, typing, json, enum, time, datetime, aiohttp, random, asyncio, re, syllables, traceback, io, os, sys, speech_recognition, subprocess, base64, math, pdqhash, cv2
 from discord import app_commands
 from discord import StickerFormatType
 from discord.ext import commands, tasks
@@ -12,9 +12,15 @@ from translate import Translator
 from nltk.corpus import cmudict
 from langdetect import detect
 from typing import Literal, Optional
+from types import SimpleNamespace
 from dotenv import load_dotenv
 from datetime import datetime, timezone, timedelta
 from os.path import isfile, join
+
+import numpy as np
+
+with open("hashes.txt", "r") as f:
+    hashes = f.read().splitlines()
 
 load_dotenv()
 TOKEN = os.getenv("TOKEN")
@@ -37,6 +43,7 @@ catchesInChannels = {}
 catchesInBirdChannels = {}
 memoryboxpages = {}
 processing_starboard_messages = []
+mariyap = {}
 
 evaluser = cfg["evaluser"]
 kreisi_links = cfg["kreisilinks"]
@@ -107,7 +114,7 @@ default_join_messages = [
 
 TICKET_BUTTON_PREFIX = "ticket_button_wow_yay:"
 RASPBERRY_BUTTON_PREFIX = "raspberry_button_whoo_hooo:"
-ver = "v1.4.5"
+ver = "v1.4.6"
 defaultstatus = "NeoCat Police "+ver
 if "status" in cfg:
     defaultstatus = cfg["status"]
@@ -518,6 +525,28 @@ installed snapins: `{', '.join(snapins)}`
 async def help(ctx: commands.Context):
     await ctx.response.send_message("[Click here to go to the NeoCat Police Documentation](https://kbity.github.io/neocat-police/index.html)")
 
+@tree.command(name="get_id", description="get id of discord stuff")
+@app_commands.describe(user="user account")
+@app_commands.describe(role="server role")
+@app_commands.describe(channel="any kind of channel")
+@app_commands.describe(server="get server id")
+@app_commands.describe(message="message link")
+async def help(ctx: commands.Context, user: discord.User = None, role: discord.Role = None, channel: discord.abc.GuildChannel = None, server: bool = False, message: str = None):
+    if user:
+        resolvedId = user.id
+    elif role:
+        resolvedId = role.id
+    elif channel:
+        resolvedId = channel.id 
+    elif server:
+        resolvedId = ctx.guild.id
+    elif message and "discord.com" in message:
+        resolvedId = message.rsplit("/", 1)[-1]
+    else:
+        return await ctx.response.send_message(f"please specify a something to get the id of.")
+
+    await ctx.response.send_message(f"the id is `{resolvedId}`")
+
 @tree.command(name="close", description="lock emoji 2 cooler edition")
 @discord.app_commands.default_permissions(manage_threads=True)
 @app_commands.describe(reason="sybau")
@@ -685,57 +714,76 @@ async def ban_error(ctx, error):
     else:
         raise error
 
-@tree.command(name="appeals-configure", description="Link this server as the appeals server for another server.")
+async def do_nothing(*args):
+    pass
+
+@tree.command(name="appeals-configure", description="Link this server to an appeals channel")
 @discord.app_commands.default_permissions(administrator=True)
 @commands.has_permissions(administrator=True)
-@app_commands.describe(main_server_id="The ID of the server this one will handle appeals for.")
-async def appeals_configure(ctx: commands.Context, main_server_id: str, remove: bool = False):
+@app_commands.describe(appeals_channel_id="The ID of the channel to handle appeals in")
+async def appeals_configure(ctx: commands.Context, appeals_channel_id: str = None):
     await ctx.response.defer(ephemeral=False)
-    appeals_id = str(ctx.guild.id)
-    db = load_db(appeals_id) 
+    db = load_db(ctx.guild.id)
+    chn = None
 
-    try:
-        main_server_id_int = int(main_server_id)
-    except ValueError:
-        await ctx.followup.send("invalid server id. right click the main server you want to link with developer mode enabled")
-        return
+    if appeals_channel_id is None:
+        if not db.get("appeal_server"):
+            return await ctx.followup.send("yeah ok liberal :<")
+        appealsid = db.pop("appeal_server")
+        if appealsid:
+            chn = SimpleNamespace(guild=SimpleNamespace(id=appealsid), send=do_nothing) # stub it off
+            db_appeals = load_db(appealsid)
 
-    main_guild = bot.get_guild(main_server_id_int)
-    if not main_guild:
-        await ctx.followup.send("add the bot to the main server")
-        return
+            try:
+                db_appeals.pop("main_server")
+            except Exception as e:
+                print(e)
 
-    main_member = main_guild.get_member(ctx.user.id)
-    if not main_member:
-        await ctx.followup.send("lil bro isnt in that server :rofl:")
-        return
+            try:
+                db_appeals.pop("appeals_channel")
+            except Exception as e:
+                print(e)
 
-    if not main_member.guild_permissions.administrator:
-        await ctx.followup.send("You must have admin in **main server**, dumbass")
-        return
-
-    if not ctx.user.guild_permissions.administrator:
-        await ctx.followup.send("You must also have admin in this (appeals) server.")
-        return
-
-    # get main server id
-    main_id = str(main_server_id_int)
-    db_main = load_db(main_id)
-    if remove:
-        db_main.pop("appeal_server", None)
-        db.pop("main_server", None)
+            res = f"{ctx.user.mention} unset appeals server for `{ctx.guild.name}`."
     else:
-        db_main["appeal_server"] = appeals_id
-        db["main_server"] = main_id
+        if not appeals_channel_id.isdigit():
+            return await ctx.followup.send("invalid snowflake. right click the main server you want to link with developer mode enabled, or run /get_id channel:#channel in appeals server.")
+        chn = bot.get_channel(int(appeals_channel_id))
+        if not chn:
+            try:
+                chn = await bot.fetch_channel(int(appeals_channel_id))
+            except Exception:
+                return await ctx.followup.send("invalid channel id. right click the main server you want to link with developer mode enabled, or run /get_id channel:#channel in appeals server. this may also be caused by neocat police not being in the appeals server, if so, please add neocat police to the appeals server first")
 
-    save_db(main_id, db_main)
-    save_db(appeals_id, db)
-    if remove:
-        res = f"{ctx.user.mention} unset appeals server for `{main_guild.name}`."
-    else:
-        res = f"{ctx.user.mention} set `{ctx.guild.name}` as the appeals server for `{main_guild.name}`."
-    await log_action(main_guild, res)
+        if chn.guild == ctx.guild:
+            return await ctx.followup.send("appeals channel cant be in the main server")
+
+        usrmbr = chn.guild.get_member(ctx.user.id)
+        if not usrmbr:
+            await ctx.followup.send("you are not in the appeals server, dummy")
+            return
+
+        if not usrmbr.guild_permissions.administrator:
+            await ctx.followup.send("You must have admin in appeals server to set this")
+            return
+
+        # get main server id
+        db_appeals = load_db(chn.guild.id)
+
+        db["appeal_server"] = chn.guild.id
+        db_appeals["main_server"] = ctx.guild.id
+        db_appeals["appeals_channel"] = chn.id
+
+        res = f"{ctx.user.mention} set `{chn.guild.name}` as the appeals server for `{ctx.guild.name}`."
+
+    save_db(ctx.guild.id, db)
+    if chn:
+        save_db(chn.guild.id, db_appeals)
+
+    await log_action(ctx.guild, res)
     await ctx.followup.send(res)
+    if chn:
+        await chn.send(res)
 
 @tree.command(name="accept", description="Accept an appeal request and unban the user.")
 @discord.app_commands.default_permissions(kick_members=True)
@@ -759,12 +807,15 @@ async def accept(ctx: commands.Context, user: discord.User, reason: str = "None"
 
     # Try to generate an invite link
     try:
-        first_text_channel = next((c for c in main_guild.text_channels if c.permissions_for(main_guild.me).create_instant_invite), None)
-        invite = await first_text_channel.create_invite(max_age=3600, max_uses=1, unique=True, reason="Appeal accepted")
+        try:
+            invite = await getinvlink(main_guild)
+            invite = invite.url
+        except Exception:
+            invite = "failed to create invite. you were still unbanned tho"
         await user.send(
             f"hello your appeal in {main_guild.name} has been accepted!\n"
             f"reason: `{reason}`\n"
-            f"join back using {invite.url}"
+            f"join back using {invite}"
         )
     except Exception as e:
         await print(f"Failed to DM user: {e}")
@@ -848,26 +899,41 @@ async def on_member_join(member: discord.Member):
     if not main_guild:
         return
 
-    # Look for the action log channel in the main guild
-    log_channel_id = main_db.get("action_log_channel")
-    if not log_channel_id:
-        return
+    if db.get("appeals_channel"):
+        try:
+            chnl = bot.get_channel(db.get("appeals_channel"))
+            if not chnl:
+                chnl = await bot.get_channel(db.get("appeals_channel"))
+        except Exception as e:
+            print(e)
 
-    log_channel = main_guild.get_channel(int(log_channel_id))
-    if not log_channel:
-        return
+        modrole = ""
+        if db.get("mod_roles", {}).get("mod", {}):
+            modrole = db["mod_roles"]["mod"]
+        elif db.get("mod_roles", {}).get("functional_mod", {}):
+            modrole = db["mod_roles"]["functional_mod"]
 
-    # Search the latest 50 log messages for a ban message mentioning this user
-    async for message in log_channel.history(limit=50):
-        if f"<@{str(member.id)}> was permanently banned by" in message.content:
-            # Found a relevant log, send it to the first text channel in the appeals server
-            first_text_channel = discord.utils.get(member.guild.text_channels, type=discord.ChannelType.text)
-            if first_text_channel:
-                try:
-                    await first_text_channel.send(message.content)
-                except Exception as e:
-                    print(f"Failed to send appeal context in {member.guild.name}: {e}")
-            break  # Stop after first relevant match
+        if modrole:
+            modrole = "<@&"+modrole+">"
+
+        logs = load_db(str(main_guild.id), "modlogs")
+        userlogs = logs[str(member.id)]["punishments"]
+        modid = "unknown"
+        reason = "unknown"
+        # FORMAT: moderator (0), reason (1), type (2), on (3), until/extra (4)
+        # oldest are first so it is reversed
+        for action in reversed(userlogs):
+            if action[2] == "ban" or (action[2] == "pwarn" and action[4] == "auto-punish: ban"):
+                modid = action[0]
+                reason = action[1]
+                break
+
+        msgdat = f"{modrole} <@{member.id}> wants to appeal a ban by <@{modid}> for reason `{reason}`."
+        if db.get("classic_appeals"):
+            await chnl.send(msgdat)
+        else:
+            thread = await chnl.create_thread(name=member.name, type=discord.ChannelType.private_thread, invitable=False)
+            await thread.send(msgdat)
 
 @bot.event
 async def on_member_remove(member):
@@ -1039,7 +1105,7 @@ async def kick_error(ctx, error):
 @discord.app_commands.default_permissions(moderate_members=True)
 @app_commands.describe(messageid="action log entry id or URL")
 @app_commands.describe(newreason="idi nahui")
-async def modlogs(ctx: commands.Context, messageid: str, newreason: str):
+async def reason(ctx: commands.Context, messageid: str, newreason: str):
     await ctx.response.defer()
     if "discord.com" in messageid:
         messageId = messageid.rsplit("/", 1)[-1]
@@ -1113,7 +1179,7 @@ async def modlogs(ctx: commands.Context, messageid: str, newreason: str):
 @tree.command(name="unwarn", description="removes a warn")
 @discord.app_commands.default_permissions(moderate_members=True)
 @app_commands.describe(messageid="action log entry id or URL")
-async def modlogs(ctx: commands.Context, messageid: str):
+async def unwarn(ctx: commands.Context, messageid: str):
     await ctx.response.defer()
     if "discord.com" in messageid:
         messageId = messageid.rsplit("/", 1)[-1]
@@ -1476,10 +1542,10 @@ async def log_ticket(guild: discord.Guild, content: str, embeds: list = None):
 @commands.has_permissions(manage_guild=True)
 @discord.app_commands.default_permissions(manage_guild=True)
 @app_commands.describe(property="select the db property you wish to change")
-@app_commands.describe(boolean="true or false")
-@app_commands.describe(string="WORDS!!")
-@app_commands.describe(integer="m a t h (a number fyi)")
-async def configure(ctx: commands.Context, property: Literal['disableFreakouts [boolean]', 'disableAI [boolean]', 'disableUnyap [boolean]', 'antispam [boolean]', 'aiticketresponse [boolean]', 'memoryboxyc [boolean]', 'DCmute_bird [boolean]', 'isPwarnDefault [boolean]', 'verifyOnUnjail [boolean]', 'appeal_message [string]', 'ai_automod_prompt [string]', 'aiticketprompt [string]', 'DCTimeout_Bird [integer]', 'DCRuleNumber [integer]'], boolean: bool = None, string: str = None, integer: int = None):
+@app_commands.describe(boolean="true or false value")
+@app_commands.describe(string="a word/string/text value")
+@app_commands.describe(integer="a number value")
+async def configure(ctx: commands.Context, property: Literal['disableFreakouts [boolean]', 'disableAI [boolean]', 'disableUnyap [boolean]', 'antispam [boolean]', 'aiticketresponse [boolean]', 'memoryboxyc [boolean]', 'DCmute_bird [boolean]', 'isPwarnDefault [boolean]', 'verifyOnUnjail [boolean]', 'spam_prevention [boolean]', 'hard_ban [boolean]', 'ban_underage_asap [boolean]', 'classic_appeals [boolean]', 'appeal_message [string]', 'ai_automod_prompt [string]', 'aiticketprompt [string]', 'DCTimeout_Bird [integer]', 'DCRuleNumber [integer]'], boolean: bool = None, string: str = None, integer: int = None):
     await ctx.response.defer(ephemeral=False)
     typekey = property.replace(' [boolean]', '').replace(' [string]', '').replace(' [integer]', '')
 
@@ -1788,75 +1854,84 @@ async def on_voice_state_update(member, before, after):
 
     channel = bot.get_channel(int(channel_id))
     if channel:
-            await channel.send(res)
+        await channel.send(res)
+
+    if after.channel:
+        if db.get("honeypot", {}).get(str(after.channel.id)):
+            await member.move_to(None)
 
 @bot.event
 async def on_raw_reaction_add(payload):
     if payload.user_id == bot.user.id: # ignore thyself
         return
 
+    # populate data from payload
+
     guild_id = str(payload.guild_id)
     guild = bot.get_guild(payload.guild_id)
     if not guild:
-        return
-
-    db = load_db(guild_id)
-    db.setdefault("starboards", {})
-
-    logging_channel_id = db.get("reaction_log_channel")
-    if logging_channel_id:
-        log_channel = guild.get_channel(logging_channel_id)
-
+        try:
+            guild = await bot.fetch_guild(payload.guild_ud)
+        except Exception as e:
+            print(f"Error in in guild fetch for reaction handling, {e}")
+            return
 
     user = guild.get_member(payload.user_id)
-    unicodeblcok = ""
-    isunicode = 0
-    shouldlogunicode = 0
-    if not payload.emoji.id:
-        unicodeblcok = f"{payload.emoji}\n"
-        isunicode = 1
+    if user is None:
+        try:
+            user = await guild.fetch_member(payload.user_id)
+        except Exception as e:
+            print(f"Error in in user fetch for reaction handling, {e}")
+            return
 
+    # check if bot can access channel
     channel = guild.get_channel(payload.channel_id)
     if channel is None:
         try:
             channel = await bot.fetch_channel(payload.channel_id)
-        except discord.NotFound:
-            print(f"Channel {payload.channel_id} not found.")
+        except Exception as e:
+            print(f"Error in in user fetch for reaction handling, {e}")
             return
-        except discord.Forbidden:
-            print(f"Missing permissions to fetch channel {payload.channel_id}.")
-            return
-        except discord.HTTPException as e:
-            print(f"HTTP error while fetching channel: {e}")
-            return
+
+    # get message
     message = await channel.fetch_message(payload.message_id)
-    serveremojis = guild.emojis
-    testset = [
-    "🅰️", "🅱️", "🆎", "🆑",
-    "🇦", "🇧", "🇨", "🇩", "🇪", "🇫", "🇬", "🇭", "🇮",
-    "🇯", "🇰", "🇱", "🇲", "🇳", "🇴", "🇵", "🇶", "🇷",
-    "🇸", "🇹", "🇺", "🇻", "🇼", "🇽", "🇾", "🇿",
-    "🍆", "🍑", "💦", "🍌", "🥒", "👅", "👄", "💋", "🥵", "😩", "🤤"
-    ]
+
+    # load database for server
+    db = load_db(guild_id)
+
+    # react log handling
+    logging_channel_id = db.get("reaction_log_channel")
+    if logging_channel_id:
+        log_channel = guild.get_channel(logging_channel_id)
+
+    # set up defaults for values
+    unicode_block = ""
+    is_unicode = False
+    should_log_unicode = False
+    if not payload.emoji.id:
+        unicode_block = f"{payload.emoji}\n"
+        is_unicode = True
+
+    server_emojis = guild.emojis
+    testset = ["🅰️", "🅱️", "🆎", "🆑", "🇦", "🇧", "🇨", "🇩", "🇪", "🇫", "🇬", "🇭", "🇮", "🇯", "🇰", "🇱", "🇲", "🇳", "🇴", "🇵", "🇶", "🇷", "🇸", "🇹", "🇺", "🇻", "🇼", "🇽", "🇾", "🇿", "🍆", "🍑", "💦", "🍌", "🥒", "👅", "👄", "💋", "🥵", "😩", "🤤"]
 
     if str(payload.emoji) in testset:
-        shouldlogunicode = 1
+        should_log_unicode = True
 
-    dothelog = not payload.emoji in serveremojis and not isunicode or shouldlogunicode
+    do_log = not payload.emoji in server_emojis and not is_unicode or should_log_unicode
 
-    if user is None:
-        return
-
-    if not user.bot and logging_channel_id and dothelog:
+    # log only if the user isnt a bot, there's a place to log, and the emoji is deemed to need logging
+    if not user.bot and logging_channel_id and do_log:
         reaction = next((r for r in message.reactions if str(r.emoji) == str(payload.emoji)),None)
         if reaction.count == 1:
             embed = discord.Embed(
                 title="Reaction Added",
-                description=f"by <@{payload.user_id}>\n{unicodeblcok}[Jump](https://discord.com/channels/{payload.guild_id}/{payload.channel_id}/{payload.message_id})",
+                description=f"by <@{payload.user_id}>\n{unicode_block}[Jump](https://discord.com/channels/{payload.guild_id}/{payload.channel_id}/{payload.message_id})",
             )
             embed.set_thumbnail(url=f"{payload.emoji.url}")
             await log_channel.send(embed=embed)
 
+    # react role handler
     if "reactroles" in db:
         if str(payload.message_id) in db["reactroles"]:
             if str(payload.emoji) in db["reactroles"][str(payload.message_id)]:
@@ -1888,156 +1963,75 @@ async def on_raw_reaction_add(payload):
                             if db["welcome"]["mode"] == "OnVerify":
                                 await welcomeUser(guild_id, user.id, isunderage)
 
+    # emojiboard handling
+    db.setdefault("starboards", {})
+
     if "starboard-blacklisted" in db and str(payload.channel_id) in db["starboard-blacklisted"]:
         return
-    for starboard_id in db["starboards"]:
-        emoji = db["starboards"][starboard_id].get("emoji")
-        threshold = db["starboards"][starboard_id].get("threshold", 3)
-        channel_id = db["starboards"][starboard_id].get("channel")
-        allowgenerics = db["starboards"][starboard_id].get("generics", False)
-        selfstar = db["starboards"][starboard_id].get("selfstar", True)
 
-        if not emoji or not channel_id:
-            continue
+    global processing_starboard_messages
+    if message.id in processing_starboard_messages:
+        return
 
-        channel = message.channel
-        try:
-            starboard_channel = await bot.fetch_channel(int(channel_id))
-        except Exception as e:
-            print(f"some error in getting emojiboard dest channel: {e}")
-            continue
+    processing_starboard_messages.append(message.id)
 
-        global processing_starboard_messages
-        if message.id in processing_starboard_messages:
-            continue
+    try:
+        for starboard_id in db["starboards"]:
+            emoji = db["starboards"][starboard_id].get("emoji")
+            threshold = db["starboards"][starboard_id].get("threshold", 3)
+            channel_id = db["starboards"][starboard_id].get("channel")
+            allowgenerics = db["starboards"][starboard_id].get("generics", False)
+            selfstar = db["starboards"][starboard_id].get("selfstar", True)
 
-        for reaction in message.reactions:
-            emotypecustom = False
-            if hasattr(reaction.emoji, "name"):
-                emotypecustom = True
+            if not emoji or not channel_id:
+                continue
 
-            trigger = False
-            if emotypecustom:
-                trigger = (str(reaction.emoji) == emoji)
-                if not trigger and allowgenerics:
-                    trigger = (reaction.emoji.name == emoji.split(":")[1])
-            else:
-                trigger = (str(reaction.emoji) == emoji)
+            channel = message.channel
+            try:
+                starboard_channel = await bot.fetch_channel(int(channel_id))
+            except Exception as e:
+                print(f"some error in getting emojiboard dest channel: {e}")
+                continue
 
-            if trigger:
-                processing_starboard_messages.append(message.id)
-                quitit = False
-                users = [user async for user in reaction.users()]
-                for user in users:
-                    if user.id == bot.user.id:
-                        quitit = True
+            for reaction in message.reactions:
+                triggered = str(reaction.emoji) == emoji
+                if not triggered and allowgenerics and (reaction.emoji.name == emoji.split(":")[1]):
+                    triggered = True
+
+                if triggered:
+                    reaction_count = reaction.count
+
+                    users = [user async for user in reaction.users()]
+                    for user in users:
+                        if user.id == bot.user.id:
+                            continue
+                        if not selfstar and user.id == message.author.id:
+                            reaction_count -= 1
+
+                    if reaction_count < threshold:
                         continue
-                    if reaction.count == 1 and not selfstar:
-                        ByOP = False
-                        if message.interaction_metadata:
-                            if message.interaction_metadata.user.id == user.id:
-                                ByOP = True
-                        elif user.id == message.author.id:
-                            ByOP = True
 
-                        if ByOP:
-                            await reaction.remove(user) # block self staring
-                            quitit = True
-                            processing_starboard_messages.remove(message.id)
-                            break
+                    # Jump button
+                    jump_url = message.jump_url
+                    view = View()
+                    view.add_item(Button(label=f"Jump to #{channel.name}", url=jump_url))
 
-                if quitit:
-                    processing_starboard_messages.remove(message.id)
-                    continue
-                if reaction.count < threshold:
-                    processing_starboard_messages.remove(message.id)
-                    continue
+                    db.setdefault("leaderboardEnabled", "False")
+                    if starboard_id == "1" and db["leaderboardEnabled"] == "True":
+                        db.setdefault("leaderboard", {})
+                        db["leaderboard"].setdefault(str(message.author.id), 0)
+                        db["leaderboard"][str(message.author.id)] += 1
+                        save_db(payload.guild_id, db)
 
-                try:
-                    webhook, db = await get_or_create_webhook(starboard_channel, db)
-                except Exception:
-                    err = "webhook creation failed! please make sure bot has sufficient permissions and there's free space (there's a limit of 15 webhooks per channel). if applicable, delete old neocat police webhooks."
-                    try:
-                         await starboard_channel.send(err)
-                    except Exception:
-                        try:
-                            await message.reply(err+f" additionally, this error message failed to send to <#{starboard_channel.id}>!")
-                        except Exception:
-                            print(err+f" additionally, this error message failed to send to <#{starboard_channel.id}>!"+f" additionally, this error message failed to send to <#{message.channel.id}>!")
-                    continue
+                    db = await send_fakemsg_webhook(db, message, starboard_channel, view=view)
 
-                db.setdefault("leaderboardEnabled", "False")
-                if starboard_id == "1" and db["leaderboardEnabled"] == "True":
-                    db.setdefault("leaderboard", {})
-                    db["leaderboard"].setdefault(str(message.author.id), 0)
-                    db["leaderboard"][str(message.author.id)] += 1
-                    save_db(payload.guild_id, db)
-                
-                if message.webhook_id and not message.interaction_metadata:
-                    author_name = f"{message.author.display_name}"[:80]
-                else:
-                    author_name = f"{message.author.display_name} ({message.author})"[:80]
-                avatar_url = message.author.display_avatar.url if message.author.display_avatar else None
-
-                if not message.author.bot and not message.webhook_id:
-                    embeds = []
-                else:
-                    if "https://" in message.content:
-                        embeds = []
-                    else:
-                        embeds = message.embeds
-
-                # Jump button
-                jump_url = message.jump_url
-                view = View()
-                view.add_item(Button(label=f"Jump to #{channel.name}", url=jump_url))
-
-                files = [await attachment.to_file() for attachment in message.attachments]
-
-                message_data = message.content
-
-                if message.reference:
-                    ogmsg = await message.channel.fetch_message(message.reference.message_id)
-                    omlmsg = ogmsg.content
-                    if ogmsg.content.startswith(f"-# ┌ {emojis['reply']}"):
-                        omlmsg = " ".join(ogmsg.content.splitlines()[1:])
-    
-                    omlmsg = omlmsg.replace('\n', ' ')
-                    if len(omlmsg) > 128:
-                        omlmsg[:125] += "..."
-
-                    msglink = f"https://discord.com/channels/{message.guild.id}/{message.channel.id}/{message.reference.message_id}"
-                    reply_thing = f"-# ┌ {emojis['reply']} **[@{str(ogmsg.author).replace('#0000', '')}]({msglink})**: {omlmsg}\n"
-                    message_data = reply_thing + message_data
-
-                if message.interaction_metadata:
-                    commandname = "unknown-name"
-                    cmd_msg = await bot.http.request(discord.http.Route("GET", f"/channels/{message.channel.id}/messages/{message.id}")) # interaction_metadata lacks command name parameter because fuck me ig
-                    if "interaction" in cmd_msg:
-                        if "name" in cmd_msg["interaction"]:
-                            commandname = cmd_msg["interaction"]["name"]
-
-                    command_thing = f"-# ┌ {emojis['command']} **@{message.interaction_metadata.user.name}** used `/{commandname}`\n"
-                    message_data = command_thing + message_data
-
-                content_trimmed = message_data[:2000]
-
-                try:
-                    await webhook.send(
-                        content=content_trimmed or None,
-                        username=author_name,
-                        avatar_url=avatar_url,
-                        view=view,
-                        files=files,
-                        wait=True,
-                        allowed_mentions=discord.AllowedMentions.none(),
-                        embeds=embeds
-                    )
                     await message.add_reaction(payload.emoji)
-                except Exception as e:
-                    print(e)
-                await asyncio.sleep(10) # wait before removing the message
-                processing_starboard_messages.remove(message.id)
+
+                    await asyncio.sleep(10) # wait before removing the message
+    except Exception as e:
+        print(f"error in starboard handling! {e}")
+    finally:
+        processing_starboard_messages.remove(message.id)
 
 @tree.command(name="setforumtype", description="set a forum to a type")
 @commands.has_permissions(manage_guild=True)
@@ -2102,7 +2096,7 @@ async def whitelist(ctx: commands.Context, user: discord.User, remove: bool = Fa
 @tree.command(name="setroletype", description="Set a role as a type of role (mod, underage, etc) for the bot")
 @discord.app_commands.default_permissions(manage_guild=True)
 @app_commands.describe(role_type="What kind of role", role="The role to set")
-async def setmodrole(ctx: commands.Context, role_type: Literal["admin", "mod", "minimod", "trial_mod", "functional_mod", "underage", "verified", "ai", "jail"], role: discord.Role, remove: bool = False):
+async def setmodrole(ctx: commands.Context, role_type: Literal["admin", "mod", "minimod", "trial_mod", "functional_mod", "underage", "verified", "ai", "jail", "alt"], role: discord.Role, remove: bool = False):
     await ctx.response.defer()
     guild_id = str(ctx.guild.id)
     db = load_db(guild_id)
@@ -2135,7 +2129,7 @@ async def setmodrole(ctx: commands.Context, role_type: Literal["admin", "mod", "
 @tree.command(name="setchanneltype", description="Set a channel as a type of role (slow catching, dementia, etc) for the bot")
 @discord.app_commands.default_permissions(manage_guild=True)
 @app_commands.describe(channel_type="What kind of role", channel="The channel to set")
-async def setchanneltype(ctx: commands.Context, channel_type: Literal["catching-birds", "haikus-allowed", "slow_catching", "dementia_chats", "the_ncpol_press", "one-message-go", "nonsense", "evil-dictator-chat", "banner-submissions", "no-ai", "spammy", "starboard-blacklisted"], channel: discord.TextChannel, remove: bool = False):
+async def setchanneltype(ctx: commands.Context, channel_type: Literal["catching-birds", "haikus-allowed", "slow_catching", "dementia_chats", "the_ncpol_press", "one-message-go", "nonsense", "evil-dictator-chat", "banner-submissions", "no-ai", "spammy", "kinda_spammy", "starboard-blacklisted", "honeypot", "slowmode_bomb", "appeals_channel"], channel: discord.TextChannel, remove: bool = False):
     await ctx.response.defer(ephemeral=False)
     guild_id = str(ctx.guild.id)
     db = load_db(guild_id)
@@ -2144,13 +2138,15 @@ async def setchanneltype(ctx: commands.Context, channel_type: Literal["catching-
 
     if not remove:
         whatdidido = f"{ctx.user.mention} set {channel.mention} as a `{channel_type}` channel."
-        if channel_type == "the_ncpol_press":
+        if channel_type in ("the_ncpol_press", "appeals_channel"):
             db[channel_type] = channel.id
         else:
             db[channel_type][channel_id] = True
+            if channel_type == "slowmode_bomb":
+                await channel.edit(slowmode_delay=21600)
     else:
         whatdidido = f"{ctx.user.mention} unset {channel.mention} as a `{channel_type}` channel."
-        if channel_type == "the_ncpol_press":
+        if channel_type in ("the_ncpol_press", "appeals_channel"):
             try:
                 del db[channel_type]
             except:
@@ -2162,6 +2158,35 @@ async def setchanneltype(ctx: commands.Context, channel_type: Literal["catching-
             else:
                 await ctx.followup.send(f"{channel.mention} is not marked as a `{channel_type}` channel, idiot.")
                 return
+
+    save_db(guild_id, db)
+
+    await log_action(ctx.guild, whatdidido)
+    await ctx.followup.send(whatdidido)
+
+@tree.command(name="set_honeypot", description="Set a voice honeypot channel for the bot")
+@discord.app_commands.default_permissions(manage_guild=True)
+@app_commands.describe(channel="The channel to set")
+async def set_honeypot(ctx: commands.Context, channel: discord.VoiceChannel, remove: bool = False):
+    channel_type = "honeypot"
+
+    await ctx.response.defer(ephemeral=False)
+    guild_id = str(ctx.guild.id)
+    db = load_db(guild_id)
+    channel_id = str(channel.id)
+    db.setdefault(channel_type, {})
+
+    if not remove:
+        whatdidido = f"{ctx.user.mention} set {channel.mention} as a `{channel_type}` channel."
+        db[channel_type][channel_id] = True
+    else:
+        whatdidido = f"{ctx.user.mention} unset {channel.mention} as a `{channel_type}` channel."
+
+        if channel_id in db[channel_type]:
+            del db[channel_type][channel_id]
+        else:
+            await ctx.followup.send(f"{channel.mention} is not marked as a `{channel_type}` channel, idiot.")
+            return
 
     save_db(guild_id, db)
 
@@ -2283,10 +2308,6 @@ async def setmodrole(ctx: commands.Context, message_id: str, emoji: str, role: d
 
     await log_action(ctx.guild, whatdidido)
     await ctx.followup.send(whatdidido, ephemeral=False, allowed_mentions=discord.AllowedMentions.none())
-
-def contains_symbols(string):
-    pattern = r"""[~!@#$%^&*()_+`1234567890\-=\]\[|}{:";',./<>?a-zA-Z]"""
-    return bool(re.search(pattern, string))
 
 @tree.command(name="toggle-ticket-mentions", description="enable or disable ticket pings (command)")
 @discord.app_commands.default_permissions(manage_threads=True)
@@ -2772,6 +2793,33 @@ async def unjail(ctx: commands.Context, user: discord.Member, reason: str = "Non
         print(f"failed to DM, {e}")
     await ctx.followup.send(send_message)
 
+@tree.command(name="setalt", description="toggle user having alt role")
+@discord.app_commands.default_permissions(ban_members=True)
+@app_commands.describe(user="The user to toggle")
+async def setalt(ctx: commands.Context, user: discord.Member):
+    await ctx.response.defer()
+    guild_id = str(ctx.guild.id)
+    db = load_db(guild_id)
+
+    altroleFile = db.get("alt_role", 0)
+
+    altrole = ctx.guild.get_role(int(altroleFile))
+
+    if not altrole:
+        await ctx.followup.send("Alt role not found.", ephemeral=True)
+        return
+
+    if altrole in user.roles:
+        await user.remove_roles(altrole, reason="toggle alt OFF for user")
+        res = f"{user.mention} was set as not alt by {ctx.user.mention}."
+    else:
+        await user.add_roles(altrole, reason="toggle alt ON for user")
+        res = f"{user.mention} was set as alt by {ctx.user.mention}."
+
+    await log_action(ctx.guild, res)
+
+    await ctx.followup.send(res)
+
 # AI Stuff
 @tree.command(name="personality", description="sets AI personality")
 @discord.app_commands.default_permissions(manage_guild=True)
@@ -2857,6 +2905,15 @@ async def personality(ctx: commands.Context):
 ## END
 
 # events
+@bot.event
+async def on_member_update(before: discord.Member, after: discord.Member):
+    db = load_db(before.guild.id)
+
+    underage_role = db.get("underage_role")
+    if underage_role and discord.utils.get(after.roles, id=int(underage_role)) and db.get("ban_underage_asap"):
+        fakemsg = SimpleNamespace(author=after, guild=after.guild) # hard_ban expects message object
+        await hard_ban(fakemsg, "Picked <13 in onboarding", True)
+
 @bot.tree.error
 async def on_app_command_error(ctx, error):
     traceback.print_exception(type(error), error, error.__traceback__)
@@ -2883,16 +2940,37 @@ async def on_thread_create(thread: discord.Thread):
             starter_message = await thread.fetch_message(thread.id)
             await starter_message.pin()
 
-def remove_blank_lines(s: str) -> str:
-    out = []
+# Taken from AMBC
+@bot.event
+async def on_guild_join(guild):
+    def verify(ch):
+        return ch and ch.permissions_for(guild.me).send_messages
 
-    for line in s.splitlines():
-        blank = not line.strip()
-        if blank:
-            continue
-        out.append(line)
+    def find(patt, channels):
+        for i in channels:
+            if patt in i.name:
+                return i
 
-    return "\n".join(out)
+    ch = find("bot", guild.text_channels)
+    if not verify(ch):
+        ch = find("commands", guild.text_channels)
+    if not verify(ch):
+        ch = find("general", guild.text_channels)
+
+    found = False
+    if not verify(ch):
+        for ch in guild.text_channels:
+            if verify(ch):
+                found = True
+                break
+        if not found:
+            ch = guild.owner
+
+    try:
+        if ch.permissions_for(guild.me).send_messages:
+            await ch.send(f"Hello, I'm **NeoCat Police** ({ver})\n\nI am a clone of **Cat Police**, the moderation bot of **Cat Stand**, which is the support server for **Cat Bot**\n\nIt is recommended that you read /help to get started.\n\n-# **NeoCat Police** was created by **@mari2_ok**. **Cat Police**, **Cat Stand**, and **Cat Bot** were created by **@milenakos**.")
+    except Exception:
+        pass
 
 @bot.event
 async def on_message(message: discord.Message):
@@ -2904,7 +2982,7 @@ async def on_message(message: discord.Message):
 
     if message.content.lower().startswith("i dislike lgb"):
         await message.reply("""hello, three things:
-- neocat police is developed by an lgbtq person; this server is a welcoming community and anyone who tries to make it anything else will be obliterated from existence here, i will guarantee it. however, if this server does not want to be a welcoming community, please kindly remove this bot and use a bot such as dyno or carl-bot.
+- neocat police is developed by an lgbtq person; this server should be a welcoming community and anyone who tries to make it anything else should be obliterated from existence here. however, if this server does not want to be a welcoming community, please kindly remove this bot and use a bot such as dyno or carl-bot.
 - if you don't support lgbtq for whatever reason, whether it's religious or otherwise, keep it to yourself! it costs you $0 and takes less effort to not spread that opinion in a space, and you will be a much better person for it!! saying things like "i dont like lgbtq" adds nothing to the conversation, vilifies yourself, and will most likely just get you banned from here without being able to get what you want out of the server, support or otherwise
 - if you cannot respect the above, there is a nice lovely "leave server" button for you to use
 cheerio!
@@ -2916,12 +2994,68 @@ cheerio!
     else:
         db = load_db(message.author.id)
 
-    if db.get("antispam"):
+    if db.get("spam_prevention") and not message.author.bot: # ignore bots and servers with spam_prevention disabled
+        # user spamming channels
+        if not db.get("spammy", {}).get(str(message.channel.id)) and not db.get("kinda_spammy", {}).get(str(message.channel.id)): # ignore in spammy channels
+            global mariyap
+            strusid = f"{str(message.author.id)}_{str(message.channel.id)}"
+
+            now = datetime.now().timestamp()
+            mariyap.setdefault(strusid, [])
+            mariyap[strusid].append(now)
+            mariyap[strusid] = mariyap[strusid][-15:]
+            mari_is_being_annoying = True
+            if len(mariyap[strusid]) >= 3:
+                for x in mariyap[strusid]:
+                    if not x > now-10:
+                        mari_is_being_annoying = False
+                        break
+            else:
+                mari_is_being_annoying = False
+
+            if mari_is_being_annoying:
+                mariyap[strusid].clear() # debouncing
+                await log_action(message.guild, f"<@{message.author.id}> was muted for 2 minutes by <@{bot.user.id}> for `Spam detection`.")
+                modlog(str(message.guild.id), str(message.author.id), bot.user.id, "Spam detection", "mute", until=120)
+                try:
+                    await user.timeout(timedelta(seconds=120), reason=f"{reason}")
+                except Exception:
+                    await log_action(message.guild, "Mute Failed! Check Permissions.")
+
+                msg = []
+                async for m in message.channel.history():
+                    if len(msg) == 15:
+                        break
+                    if m.author == message.author:
+                        msg.append(m)
+                try:
+                    await message.channel.delete_messages(msg)
+                except Exception:
+                    pass
+
+                msg = await message.channel.send(f"🔨 <@{message.author.id}> Please stop spamming!")
+                await asyncio.sleep(10)
+                await msg.delete()
+
+    if db.get("antispam") and not message.author.bot: # ignore bots and servers with antispam disabled
+        # crypto casino scam
         global antispam
         antispam.setdefault(str(message.author.id), {})
         antispam[str(message.author.id)].setdefault("ch", [])
         antispam[str(message.author.id)].setdefault("ct", "")
-        if message.content.count('https://') == 4 or len(message.attachments) == 4:
+
+        for att in message.attachments: # AMBC Hashing
+            if "image" not in att.content_type:
+                continue
+            new_hash = await pdq_hash(att)
+            distances = [hamming(new_hash, i) for i in hashes]
+            if min(distances) < 50:
+                if db.get("hard_ban"):
+                    await hard_ban(message, "crypto casino scam [automated]")
+                else:
+                    await soft_ban(message, "crypto casino scam [automated]")
+
+        if message.content.count('https://') == 4: # old heuristic for urls
             if antispam[str(message.author.id)]["ct"] == "":
                 antispam[str(message.author.id)]["ct"] = message.content
 
@@ -2933,17 +3067,18 @@ cheerio!
                 antispam[str(message.author.id)]["ch"] = []
 
             if len(antispam[str(message.author.id)]["ch"]) > 2:
-                try:
-                    await message.author.send(f"hello nerd you might have been banned from {message.guild} for `acting Like a scam bot`. you cant appeal this, shouldnt have been stupid")
-                except Exception:
-                    pass
-                await log_spammy(message.guild, f"{message.author.mention} was permanently banned by {bot.user.mention} for `acting Like a scam bot`.")
-                try:
-                    await message.guild.ban(message.author, reason="acting Like a scam bot", delete_message_seconds=(1*3600))
-                except Exception:
-                    await log_spammy(message.guild, f"{message.author.mention} was NOT permanently banned because I lack perms.")
+                if db.get("hard_ban"):
+                    await hard_ban(message, "spamming 4 urls in multiple channels in sequence [automated]")
+                else:
+                    await soft_ban(message, "spamming 4 urls in multiple channels in sequence [automated]")
         else:
             antispam[str(message.author.id)]["ch"] = []
+
+    if db.get("honeypot", {}).get(str(message.channel.id)) and not message.author.bot: # ignore bots and servers with antispam disabled
+        if db.get("hard_ban"):
+            await hard_ban(message, "talked in honeypot [automated]")
+        else:
+            await soft_ban(message, "talked in honeypot [automated]")
 
 # AI LINE STARTS HERE
     if enableAI and not (db.get("disableAI") or db.get("no-ai", {}).get(str(message.channel.id))):
@@ -3468,24 +3603,8 @@ Now respond to this query from {garry}:
                 thread_owner = await message.guild.fetch_member(thread.owner_id)
 
                 async def restore_to_thread(interaction: discord.Interaction):
+                    nonlocal db
                     await interaction.response.defer()
-
-                    webhook, db = await get_or_create_webhook(yappost, db)
-
-                    author_name = f"{message.author.display_name}"
-                    avatar_url = message.author.display_avatar.url if message.author.display_avatar else None
-
-                    sticker_data = ""
-                    message_data = message.content[:2000]
-                    if message.stickers:
-                        sticker = message.stickers[0]
-                        if sticker.format == StickerFormatType.gif:
-                            suffix = ".gif"
-                        else:
-                            suffix = ".png"
-                        sticker_data = f"[{sticker.name}](https://media.discordapp.net/stickers/{sticker.id}{suffix})"
-
-                    message_data = message_data + sticker_data
 
                     files = []
                     if interaction.message.attachments:
@@ -3494,33 +3613,9 @@ Now respond to this query from {garry}:
                             fp = io.BytesIO(data)
                             files.append(discord.File(fp, filename=attachment.filename))
 
-                    if message.reference:
-                        ogmsg = await message.channel.fetch_message(message.reference.message_id)
-                        omlmsg = ogmsg.content
-                        if ogmsg.content.startswith(f"-# ┌ {emojis['reply']}"):
-                            omlmsg = " ".join(ogmsg.content.splitlines()[1:])
-    
-                        omlmsg = omlmsg.replace('\n', ' ')
-                        if len(omlmsg) > 128:
-                            omlmsg[:125] += "..."
+                    db = await send_fakemsg_webhook(db, message, message.channel, files=files)
 
-                        msglink = f"https://discord.com/channels/{message.guild.id}/{message.channel.id}/{message.reference.message_id}"
-                        reply_thing = f"-# ┌ {emojis['reply']} **@{str(ogmsg.author).replace('#0000', '')}**: [{omlmsg}]({msglink})\n"
-                        message_data = reply_thing + message_data
-
-                    if not files:
-                        message_data = message_data or "-# no message content\n"
-
-                    await webhook.send(
-                        content=message_data[:2000],
-                        username=author_name,
-                        avatar_url=avatar_url,
-                        files=files,
-                        wait=True,
-                        allowed_mentions=discord.AllowedMentions.none(),
-                        thread=message.channel
-                    )
-
+                    #webhook, db = await get_or_create_webhook(yappost, db)
 
                 restoer = discord.ui.Button(label="Restore to thread", style=discord.ButtonStyle.secondary)
                 restoer.callback = restore_to_thread
@@ -3539,18 +3634,8 @@ Now respond to this query from {garry}:
                 except discord.NotFound:
                     return
             if discord.utils.get(message.author.roles, id=int(underage_role)):
-                if not message.type == discord.MessageType.new_member:
-                    await message.delete()
-                    try:
-                        await message.author.send(f"hello nerd you might have been banned from {message.guild.name} for `Picked <13 in onboarding`. you cant appeal this, shouldnt have been stupid")
-                    except Exception:
-                        pass
-                    await log_spammy(message.guild, f"{message.author.mention} was permanently banned by {bot.user.mention} for `Picked <13 in onboarding`.")
-                    try:
-                        await message.guild.ban(message.author, reason="Picked <13 in onboarding", delete_message_seconds=60)
-                    except Exception as e:
-                        print(f"failed to ban an underage user ({message.author}), {e}")
-                    return
+                if (not message.type == discord.MessageType.new_member) or db.get("ban_underage_asap"):
+                    await hard_ban(message, "Picked <13 in onboarding", True)
 
     # Check if it's a dementia chat channel and fetch messages
     if db.get("dementia_chats", {}).get(channel_id):
@@ -3567,6 +3652,19 @@ Now respond to this query from {garry}:
                         await msg.delete()
                     except Exception:
                         pass  # Ignore failures
+
+    # this is for the bomb. kaboom.
+    if db.get("slowmode_bomb", {}).get(str(message.channel.id)):
+        newdelay = message.channel.slowmode_delay - 1
+        if newdelay < 0:
+            await message.channel.delete()
+            time = discord.utils.snowflake_time(message.channel.id).timestamp()
+            ctime = datetime.now().timestamp()
+            rtime = ctime-time
+            totaldays = rtime / 86400
+            await log_action(message.guild, f"`#{message.channel}` got blown up after **{round(totaldays, 2)}** days. o7\n-# <@{message.author.id}> caused the explosion. channel id was {message.channel.id}.")
+        else:
+            await message.channel.edit(slowmode_delay=newdelay)
 
     # Check if it's a one message go channel
     if db.get("one-message-go", {}).get(channel_id):
@@ -3803,6 +3901,8 @@ async def welcomeUser(guildId, userId, isunderage = False):
     channelId = int(welcome["channel"])
     if isunderage:
         emoji = welcome.get("underage_emoji", welcome["emoji"])
+        if db.get("ban_underage_asap"):
+            return # dont welcome underage members
     else:
         emoji = welcome["emoji"]
     msg = random.choice(messages)
@@ -3994,6 +4094,178 @@ def detect_haiku(text):
         return False
 
     return "\n".join(lines)
+
+async def pdq_hash(attachment):
+    img_bytes = await attachment.read()
+    arr = np.frombuffer(img_bytes, dtype=np.uint8)
+    img_bgr = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+    image = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
+    bits, _ = pdqhash.compute(image)
+    n = ((len(bits) + 7) // 8) * 8
+    padded = np.pad(bits, (0, n - len(bits)), constant_values=0)
+    bytes_arr = np.packbits(padded.reshape(-1, 8), axis=1, bitorder='big').flatten()
+    return str(bytes_arr.tobytes().hex())
+
+def hamming(a, b):
+    a = int(a, 16)
+    b = int(b, 16)
+    return (a ^ b).bit_count()
+
+def remove_blank_lines(s: str) -> str:
+    out = []
+
+    for line in s.splitlines():
+        blank = not line.strip()
+        if blank:
+            continue
+        out.append(line)
+
+    return "\n".join(out)
+
+def contains_symbols(string):
+    pattern = r"""[~!@#$%^&*()_+`1234567890\-=\]\[|}{:";',./<>?a-zA-Z]"""
+    return bool(re.search(pattern, string))
+
+async def getinvlink(guild: discord.Guild):
+    invites = await guild.invites()
+
+    for invite in invites:
+        if invite.max_age == 0 and invite.max_uses == 0:
+            return invite
+
+    channel = discord.utils.find(
+        lambda c: isinstance(c, discord.TextChannel)
+        and c.permissions_for(guild.me).create_instant_invite,
+        guild.channels
+    )
+
+    if channel is None:
+        raise RuntimeError("I don't have permission to create an invite.")
+
+    return await channel.create_invite(max_age=604800, max_uses=1, temporary=False, unique=True)
+
+async def hard_ban(message, reason: str, spamlog: bool = False):
+    log_shadow = log_spammy if spamlog else log_action
+    
+    try:
+        await message.author.send(f"hello nerd you might have been banned from {message.guild} for `{reason}`. you cant appeal this, shouldnt have been stupid")
+    except Exception:
+        pass
+
+    await log_shadow(message.guild, f"{message.author.mention} was permanently banned by {bot.user.mention} for `{reason}`.")
+    modlog(message.guild.id, str(message.author.id), bot.user.id, reason, "ban")
+    try:
+        await message.guild.ban(message.author, reason=reason, delete_message_seconds=(1*3600))
+    except Exception:
+        await log_shadow(message.guild, f"{message.author.mention} was NOT permanently banned because I lack perms.")
+
+async def soft_ban(message: discord.Message, reason: str, spamlog: bool = False):
+    log_shadow = log_spammy if spamlog else log_action
+
+    try:
+        invlink = await getinvlink(message.guild)
+        invlink = invlink.url
+    except Exception:
+        invlink = "... please contact the server's admins/owners to rejoin"
+
+    try:
+        await message.author.send(f"hello nerd you have been kicked from {message.guild} for `{reason}`. please change your password if you haven't yet, and be more careful with scams next time. you can join back using {invlink}")
+    except Exception:
+        pass
+
+    await log_action(message.guild, f"{message.author.mention} was soft-banned by {bot.user.mention} for `{reason}`.")
+    modlog(message.guild.id, str(message.author.id), bot.user.id, reason, "kick")
+    try:
+        await message.guild.ban(message.author, reason=reason, delete_message_seconds=(1*3600))
+        await message.guild.unban(message.author, reason="remove softban")
+    except Exception:
+        await log_action(message.guild, f"{message.author.mention} was NOT soft-banned because I lack perms.")
+
+async def send_fakemsg_webhook(db, message, channel, view = discord.ui.View(), files = None):
+    chan = channel
+    thd = None
+    if isinstance(chan, discord.Thread):
+        thd = channel
+        chan = channel.parent
+
+    try:
+        webhook, db = await get_or_create_webhook(chan, db)
+    except Exception:
+        err = "webhook creation failed! please make sure bot has sufficient permissions and there's free space (there's a limit of 15 webhooks per channel). if applicable, delete old neocat police webhooks."
+        try:
+            await message.channel.send(err)
+        except Exception:
+            try:
+                await message.reply(err+f" additionally, this error message failed to send to <#{channel.id}>!")
+            except Exception:
+                print(err+f" additionally, this error message failed to send to <#{channel.id}>!"+f" additionally, this error message failed to send to <#{message.channel.id}>!")
+        raise Exception("Webhook creation failed")
+                
+    if message.webhook_id and not message.interaction_metadata:
+        author_name = f"{message.author.display_name}"[:80]
+    else:
+        author_name = f"{message.author.display_name} ({message.author})"[:80]
+        avatar_url = message.author.display_avatar.url if message.author.display_avatar else None
+
+    if not message.author.bot and not message.webhook_id:
+        embeds = []
+    else:
+        if "https://" in message.content:
+            embeds = []
+        else:
+            embeds = message.embeds
+
+    if files is None:
+        files = [await attachment.to_file() for attachment in message.attachments]
+
+    message_data = message.content
+
+    if message.stickers:
+        sticker = message.stickers[0]
+        if sticker.format == StickerFormatType.gif:
+            suffix = ".gif"
+        else:
+            suffix = ".png"
+        sticker_data = f"[{sticker.name}](https://media.discordapp.net/stickers/{sticker.id}{suffix})"
+        message_data = message_data + sticker_data
+
+    if message.reference:
+        ogmsg = await message.channel.fetch_message(message.reference.message_id)
+        omlmsg = ogmsg.content
+        if ogmsg.content.startswith(f"-# ┌ {emojis['reply']}"):
+            omlmsg = " ".join(ogmsg.content.splitlines()[1:])
+    
+        omlmsg = omlmsg.replace('\n', ' ')
+        if len(omlmsg) > 128:
+            omlmsg[:125] += "..."
+
+        msglink = f"https://discord.com/channels/{message.guild.id}/{message.channel.id}/{message.reference.message_id}"
+        reply_thing = f"-# ┌ {emojis['reply']} **[@{str(ogmsg.author).replace('#0000', '')}]({msglink})**: {omlmsg}\n"
+        message_data = reply_thing + message_data
+
+    if message.interaction_metadata:
+        commandname = "unknown-name"
+        cmd_msg = await bot.http.request(discord.http.Route("GET", f"/channels/{message.channel.id}/messages/{message.id}")) # interaction_metadata lacks command name parameter because fuck me ig
+        if "interaction" in cmd_msg:
+            if "name" in cmd_msg["interaction"]:
+                commandname = cmd_msg["interaction"]["name"]
+
+        command_thing = f"-# ┌ {emojis['command']} **@{message.interaction_metadata.user.name}** used `/{commandname}`\n"
+        message_data = command_thing + message_data
+
+    content_trimmed = message_data[:2000]
+
+    # fucking discord.py
+    kwargs = {"content": content_trimmed or None, "username": author_name, "avatar_url": avatar_url, "view": view, "files": files, "wait": True, "allowed_mentions": discord.AllowedMentions.none(), "embeds": embeds}#
+    if thd is not None:
+        kwargs["thread"] = thd
+
+    try:
+        await webhook.send(**kwargs)
+    except Exception as e:
+        print(e)
+
+    return db
 
 # tasks
 @tasks.loop(seconds=1)
