@@ -7,7 +7,7 @@ sys.stdout.reconfigure(line_buffering=True) # allows thing
 
 cfg = json.load(open(f"berry.json", 'r')) # load config file
 hostName = cfg["hostName"]
-domainName = cfg["domainName"]
+domainName = cfg.get("domainName", hostName)
 serverPort = cfg["serverPort"]
 https_enabled = cfg.get("enableHTTPS", False)
 ver = "v1.3.0"
