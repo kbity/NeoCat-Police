@@ -1,7 +1,8 @@
-1. get the things needed with `pip install discord.py translate nltk langdetect python-dotenv aiohttp syllables pydub SpeechRecognition`
-2. optional: also get detection-engine to allow for raspberry to work
-3. create .env and add in TOKEN=BOT.TOKEN_12345 with "BOT.TOKEN_12345" being your bot's token
-4. run bot.py (python bot.py)
+1. get the things needed with `pip install discord.py aiohttp syllables SpeechRecognition pydub translate nltk langdetect python-dotenv Pillow numpy pdqhash opencv-python
+2. run python3.14 -m nltk.downloader cmudict to make haikus work
+3. optional: also get detection-engine to allow for raspberry to work
+4. create .env and add in TOKEN=BOT.TOKEN_12345 with "BOT.TOKEN_12345" being your bot's token
+5. run bot.py (python bot.py)
 
    its as simple as that.
    
