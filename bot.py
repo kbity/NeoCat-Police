@@ -49,6 +49,7 @@ evaluser = cfg["evaluser"]
 kreisi_links = cfg["kreisilinks"]
 enableAI = cfg["enableAI"]
 emojis = cfg["emojis"]
+warn_https = cfg.get("warn_https", True)
 
 punishments = cfg.get("punishments", ['5m', '1h', '6h', '48h', 'ban', 'pban'])
 
@@ -127,6 +128,9 @@ os.makedirs("modlogs", exist_ok=True)
 os.makedirs("snapins", exist_ok=True)
 if enable_raspberry:
     os.makedirs("registry", exist_ok=True)
+    with open(f"berry.json", 'r') as q:
+        raspcfg = json.load()
+        https_enabled = raspcfg.get("enableHTTPS", False)
 
 bot = commands.Bot(command_prefix=cfg["prefix"], intents=intents)
 tree = bot.tree
@@ -233,7 +237,11 @@ class RaspberryButton(discord.ui.View):
                 view = View()
                 berry_url = f"{raspberry_url}/{basec}/{base2c}"
                 view.add_item(Button(label=f"Verify", url=berry_url))
-                await interaction.followup.send(f"Click this link to verify:", view=view, ephemeral=True)
+                res = "Click this link to verify:"
+                if https_enabled and warn_https:
+                    res += "\n-# NOTE: Raspberry uses a self-signed TLS Certificate. This adds encryption, but also suspicion from web browsers, as self-signed certs are often, but not always, used illegitimately. Please select advanced and add an exception."
+                
+                await interaction.followup.send(res, view=view, ephemeral=True)
         else:
             await interaction.followup.send(f"Raspberry Unavailable", ephemeral=True)
 

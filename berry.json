@@ -1,4 +1,6 @@
 {
   "hostName": "192.168.254.90",
-  "serverPort": 1135
+  "domainName": "192.168.254.90",
+  "serverPort": 1135,
+  "enableHTTPS": true
 }

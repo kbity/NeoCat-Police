@@ -7,8 +7,63 @@ sys.stdout.reconfigure(line_buffering=True) # allows thing
 
 cfg = json.load(open(f"berry.json", 'r')) # load config file
 hostName = cfg["hostName"]
+domainName = cfg["domainName"]
 serverPort = cfg["serverPort"]
-ver = "v1.2.1"
+https_enabled = cfg.get("enableHTTPS", False)
+ver = "v1.3.0"
+
+if https_enabled:
+    # https support
+    import ssl, ipaddress
+    from datetime import datetime, timezone, timedelta
+    from pathlib import Path
+    from cryptography import x509
+    from cryptography.x509.oid import NameOID
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+
+def generate_certificate(cert_file="raspberry.crt", key_file="raspberry.key"):
+    if Path(cert_file).exists() and Path(key_file).exists():
+        return
+
+    key = rsa.generate_private_key(
+        public_exponent=65537,
+        key_size=2048,
+    )
+
+    subject = issuer = x509.Name([
+        x509.NameAttribute(NameOID.COMMON_NAME, "NeoCat Police"),
+    ])
+
+    cert = (
+        x509.CertificateBuilder()
+        .subject_name(subject)
+        .issuer_name(issuer)
+        .public_key(key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(datetime.now(timezone.utc))
+        .not_valid_after(datetime.now(timezone.utc) + timedelta(days=3650))
+        .add_extension(
+            x509.SubjectAlternativeName([
+                x509.DNSName(domainName),
+                x509.IPAddress(ipaddress.ip_address(hostName)),
+            ]),
+            critical=False,
+        )
+        .sign(key, hashes.SHA256())
+    )
+
+    with open(key_file, "wb") as f:
+        f.write(
+            key.private_bytes(
+                serialization.Encoding.PEM,
+                serialization.PrivateFormat.TraditionalOpenSSL,
+                serialization.NoEncryption(),
+            )
+        )
+
+    with open(cert_file, "wb") as f:
+        f.write(cert.public_bytes(serialization.Encoding.PEM))
 
 # Basic Logic to pull version from bot.py
 def openfile(file_path):
@@ -57,44 +112,72 @@ head = """
         body {
             font-family: Arial, sans-serif;
             text-align: center;
-            margin-top: 50px;
+            margin-top: 80px;
+            font-size: 22px;
+        }
+        h1 {
+            font-size: 42px;
+            margin-bottom: 40px;
+        }
+        .option {
+            display: block;
+            width: 320px;
+            margin: 20px auto;
+            padding: 22px 30px;
+            font-size: 24px;
+            border: 3px solid #ccc;
+            border-radius: 16px;
+            cursor: pointer;
+            transition: background-color 0.15s, border-color 0.15s, color 0.15s;
+            user-select: none;
+        }
+        .option:hover {
+            border-color: #2f6fed;
+        }
+        .option input {
+            display: none;
+        }
+        .option.selected {
+            background-color: #2f6fed;
+            border-color: #2f6fed;
+            color: #fff;
         }
         button {
-            padding: 10px 20px;
-            font-size: 16px;
-            margin: 10px;
+            padding: 16px 40px;
+            font-size: 24px;
+            margin-top: 30px;
+            border-radius: 12px;
+            border: none;
+            background-color: #2f6fed;
+            color: #fff;
+            cursor: pointer;
         }
         button:disabled {
             opacity: 0.5;
             cursor: not-allowed;
         }
-        a {
-          text-decoration: none;
-        }
         small {
           color: lightgray;
-        }
-
-        .geeks {
-            font-size: 40px;
-            font-weight: bold;
-            color: green;
         }
     </style>
 </head>
 """
-htmlpage = """
+htmlpage = r"""
 !head!
 
 <body id="main">
     <h1>How old are you?</h1>
 
     <form id="age-form" onsubmit="return false;">
-        <input type="radio" id="under-13" name="age" value="u" required>
-        <label for="under-13">Under 13</label><br>
+        <label class="option" for="under-13">
+            <input type="radio" id="under-13" name="age" value="u">
+            Under 13
+        </label>
 
-        <input type="radio" id="over-13" name="age" value="o">
-        <label for="over-13">13 and over</label><br><br>
+        <label class="option" for="over-13">
+            <input type="radio" id="over-13" name="age" value="o">
+            13 and over
+        </label>
 
         <button type="submit">Submit</button>
     </form>
@@ -105,46 +188,26 @@ htmlpage = """
     </small>
 
     <script>
-        document.getElementById("age-form").addEventListener("submit", () => {
-            const choice = document.querySelector('input[name="age"]:checked');
 
-            if (!choice) return;
+        function toBase64Url(base64) {
+            return btoa(base64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''));
+        }
 
-            if (choice.value === "u") {
-                window.location.href = "/submi1/!path!";
-            } else {
-                window.location.href = "/submi2/!path!";
-            }
-        });
-    </script>
-</body>
+        function getCanvasFingerprint() {
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d');
+            ctx.textBaseline = 'top';
+            ctx.font = "14px 'Arial'";
+            ctx.textBaseline = "alphabetic";
+            ctx.fillStyle = "#f60";
+            ctx.fillRect(125, 1, 62, 20);
+            ctx.fillStyle = "#069";
+            ctx.fillText("NeoCat Police", 2, 15);
+            ctx.fillStyle = "rgba(102, 204, 0, 0.7)";
+            ctx.fillText("NeoCat Police", 4, 17);
+            return canvas.toDataURL();
+        }
 
-</html>
-""".replace("!head!", head)
-
-pleasewait = """
-!head!
-
-<body id="main">
-    Please wait...
-
-    <script>
-    function getCanvasFingerprint() {
-        const canvas = document.createElement('canvas');
-        const ctx = canvas.getContext('2d');
-        ctx.textBaseline = 'top';
-        ctx.font = "14px 'Arial'";
-        ctx.textBaseline = "alphabetic";
-        ctx.fillStyle = "#f60";
-        ctx.fillRect(125, 1, 62, 20);
-        ctx.fillStyle = "#069";
-        ctx.fillText("NeoCat Police", 2, 15);
-        ctx.fillStyle = "rgba(102, 204, 0, 0.7)";
-        ctx.fillText("NeoCat Police", 4, 17);
-        return canvas.toDataURL();
-    }
-
-    function sendFingerprint() {
         const fingerprint = {
             screenWidth: window.screen.width,
             screenHeight: window.screen.height,
@@ -152,22 +215,34 @@ pleasewait = """
             userAgent: navigator.userAgent,
             canvas: getCanvasFingerprint()
         };
-    
-        const params = new URLSearchParams(fingerprint).toString();
-        
-        // If fingerprint params already exist in URL, don't redirect infinitely
-        if (!window.location.search.includes('screenWidth')) {
-            window.location.href = window.location.pathname + "?" + params;
-        }
-    }
+        const data = JSON.stringify(fingerprint)
 
-    sendFingerprint();
+        document.querySelectorAll('.option input').forEach(function(input) {
+            input.addEventListener('change', function() {
+                document.querySelectorAll('.option').forEach(function(label) {
+                    label.classList.remove('selected');
+                });
+                input.closest('.option').classList.add('selected');
+            });
+        });
+
+        document.getElementById("age-form").addEventListener("submit", () => {
+            const choice = document.querySelector('input[name="age"]:checked');
+
+            if (!choice) return;
+
+            if (choice.value === "u") {
+                window.location.href = "/submi1/!path!" + "?s=" + toBase64Url(data);
+            } else {
+                window.location.href = "/submi2/!path!" + "?s=" + toBase64Url(data);
+            }
+        });
+
     </script>
 </body>
 
 </html>
 """.replace("!head!", head)
-
 
 verified = f"""
 {head}
@@ -184,17 +259,8 @@ invalid = "<!DOCTYPE html><html><head><title>Verification Error</title></head><b
 info = f"""{head}<body>NeoCat Police Verification Integrated Web Server \"Raspberry\" {ver}<br><small>Running as part of NeoCat Police {ncpolver}</small><p>Raspberry is provided under the AGPL-3.0 Licence<br>Copyright (c) 2025 Lia Milenakos<br>Copyright (c) 2026 Mari Kepler<br>Credit to https://pythonbasics.org/webserver/ for Providing Minimal Python Server Example</p><br></body></html>"""
 
 def combine_fingerprints(header_fp, query_params):
-    combined = {}
-    if isinstance(header_fp, dict):
-        combined.update(header_fp)
-    else:
-        print(header_fp)
-        combined['header'] = header_fp
-    
-    # query_params from parse_qs has list values, flatten them:
-    for k, v in query_params.items():
-        combined[k] = v[0] if isinstance(v, list) and len(v) > 0 else v
-    return combined
+    fingerprint = json.loads(base64.urlsafe_b64decode(query_params['s'][0]).decode('utf-8'))
+    return header_fp | fingerprint
 
 def is_tampered(fingerprint):
     # Define required keys:
@@ -256,7 +322,8 @@ def genhtmlpage(path, ip, fingerprint, query_params):
             pathd = str(int.from_bytes(pathd, 'big'))
             guild_id = base64.urlsafe_b64decode(guild + '=' * (4 - len(guild) % 4))
             guild_id = str(int.from_bytes(guild_id, 'big'))
-        except Exception:
+        except Exception as e:
+            print(e)
             return(invalid)
         db = load_db(guild_id)
         db.setdefault(pathd, {})
@@ -339,11 +406,8 @@ def genhtmlpage(path, ip, fingerprint, query_params):
     elif path.startswith("/info"):
         return(info)
     else:
-        if query_params:
-            path = path[1:]
-            return htmlpage.replace("!path!", path)
-        else:
-            return pleasewait
+        path = path[1:]
+        return htmlpage.replace("!path!", path)
 
 # Credit to https://pythonbasics.org for the HTML Server Code
 class MyServer(BaseHTTPRequestHandler):
@@ -384,9 +448,17 @@ class MyServer(BaseHTTPRequestHandler):
                 print("failed to send error")
                 pass
 
-if __name__ == "__main__":        
-    webServer = ThreadingHTTPServer((hostName, serverPort), MyServer)
-    print("Server started http://%s:%s" % (hostName, serverPort)+"/info")
+if __name__ == "__main__":
+    if https_enabled:
+        generate_certificate()
+        webServer = ThreadingHTTPServer((hostName, serverPort), MyServer)
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        context.load_cert_chain("raspberry.crt", "raspberry.key")
+        webServer.socket = context.wrap_socket( webServer.socket, server_side=True)
+        print("Server started https://%s:%s" % (hostName, serverPort)+"/info")
+    else:
+        webServer = ThreadingHTTPServer((hostName, serverPort), MyServer)
+        print("Server started http://%s:%s" % (hostName, serverPort)+"/info")
 
     try:
         webServer.serve_forever()
