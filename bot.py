@@ -2005,7 +2005,7 @@ async def on_raw_reaction_add(payload):
 
             for reaction in message.reactions:
                 triggered = str(reaction.emoji) == emoji
-                if not triggered and allowgenerics and (reaction.emoji.name == emoji.split(":")[1]):
+                if not triggered and allowgenerics and not is_unicode and (reaction.emoji.name == emoji.split(":")[1]):
                     triggered = True
 
                 if triggered:
