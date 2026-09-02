@@ -7,10 +7,12 @@ sys.stdout.reconfigure(line_buffering=True) # allows thing
 
 cfg = json.load(open(f"berry.json", 'r')) # load config file
 hostName = cfg["hostName"]
-domainName = cfg["domainName"]
+domainName = cfg.get("domainName", hostName)
 serverPort = cfg["serverPort"]
+certFile = cfg.get("cert", "raspberry.crt")
+keyFile = cfg.get("key", "raspberry.key")
 https_enabled = cfg.get("enableHTTPS", False)
-ver = "v1.3.0"
+ver = "v1.3.1o"
 
 if https_enabled:
     # https support
@@ -23,7 +25,7 @@ if https_enabled:
     from cryptography.hazmat.primitives.asymmetric import rsa
 
 def generate_certificate(cert_file="raspberry.crt", key_file="raspberry.key"):
-    if Path(cert_file).exists() and Path(key_file).exists():
+    if Path(cert_file).exists() and Path(key_file).exists(): # ignore files if they already exist
         return
 
     key = rsa.generate_private_key(
@@ -162,7 +164,7 @@ htmlpage = r"""
     <script>
 
         function toBase64Url(base64) {
-            return btoa(base64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''));
+            return btoa(base64).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
         }
 
         function getCanvasFingerprint() {
@@ -413,10 +415,10 @@ class MyServer(BaseHTTPRequestHandler):
 
 if __name__ == "__main__":
     if https_enabled:
-        generate_certificate()
+        generate_certificate(certFile, keyFile)
         webServer = ThreadingHTTPServer((hostName, serverPort), MyServer)
         context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-        context.load_cert_chain("raspberry.crt", "raspberry.key")
+        context.load_cert_chain(certFile, keyFile)
         webServer.socket = context.wrap_socket( webServer.socket, server_side=True)
         print("Server started https://%s:%s" % (hostName, serverPort)+"/info")
     else:
