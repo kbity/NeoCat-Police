@@ -12,7 +12,7 @@ serverPort = cfg["serverPort"]
 certFile = cfg.get("cert", "raspberry.crt")
 keyFile = cfg.get("key", "raspberry.key")
 https_enabled = cfg.get("enableHTTPS", False)
-ver = "v1.3.1o"
+ver = "v1.3.2o"
 
 if https_enabled:
     # https support
@@ -224,7 +224,7 @@ invalid = "<!DOCTYPE html><html><head><title>Verification Error</title></head><b
 info = f"""{head}<body>NeoCat Police Verification Integrated Web Server \"Raspberry\" {ver}<br><small>Running as part of NeoCat Police {ncpolver}</small><p>Raspberry is provided under the AGPL-3.0 Licence<br>Copyright (c) 2025 Lia Milenakos<br>Copyright (c) 2026 Mari Kepler<br>Credit to https://pythonbasics.org/webserver/ for Providing Minimal Python Server Example</p><br></body></html>"""
 
 def combine_fingerprints(header_fp, query_params):
-    fingerprint = json.loads(base64.urlsafe_b64decode(query_params['s'][0]).decode('utf-8'))
+    fingerprint = json.loads(base64.urlsafe_b64decode(query_params['s'][0] + '=' * (4 - len(query_params['s'][0]) % 4).decode('utf-8'))
     return header_fp | fingerprint
 
 def is_tampered(fingerprint):
