@@ -261,7 +261,7 @@ invalid = f"{head}<body><p>Error 400: Invalid Session</p></body></html>"
 info = f"""{head}<body>NeoCat Police Verification Integrated Web Server \"Raspberry\" {ver}<br><small>Running as part of NeoCat Police {ncpolver}</small><p>Raspberry is provided under the AGPL-3.0 Licence<br>Copyright (c) 2025 Lia Milenakos<br>Copyright (c) 2026 Mari Kepler<br>Credit to https://pythonbasics.org/webserver/ for Providing Minimal Python Server Example</p><br></body></html>"""
 
 def combine_fingerprints(header_fp, query_params):
-    fingerprint = json.loads(base64.urlsafe_b64decode(query_params['s'][0]+"========").decode('utf-8'))
+    fingerprint = json.loads(base64.urlsafe_b64decode(query_params['s'][0] + '=' * (4 - len(query_params['s'][0]) % 4).decode('utf-8'))
     return header_fp | fingerprint
 
 def is_tampered(fingerprint):
