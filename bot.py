@@ -1063,7 +1063,8 @@ async def lock(ctx: commands.Context):
     perms.send_messages_in_threads=False
     perms.create_public_threads=False
     await ctx.channel.set_permissions(ctx.guild.default_role, overwrite=perms)
-    h = await ctx.response.send_message(f"🔒 {ctx.channel.mention} has been locked by {ctx.user.mention}", wait=True)
+    await ctx.response.send_message(f"🔒 {ctx.channel.mention} has been locked by {ctx.user.mention}")
+    h = await ctx.original_response()
     await log_action(ctx.guild, f"🔒 {ctx.channel.mention} has been locked by {ctx.user.mention}", h.jump_url)
 
 @lock.error
@@ -1079,7 +1080,8 @@ async def unlock(ctx: commands.Context):
     perms.send_messages_in_threads=True
     perms.create_public_threads=True
     await ctx.channel.set_permissions(ctx.guild.default_role, overwrite=perms)
-    h = await ctx.response.send_message(f"🔓 {ctx.channel.mention} has been unlocked by {ctx.user.mention}", wait=True)
+    await ctx.response.send_message(f"🔓 {ctx.channel.mention} has been unlocked by {ctx.user.mention}")
+    h = await ctx.original_response()
     await log_action(ctx.guild, f"🔓 {ctx.channel.mention} has been unlocked by {ctx.user.mention}", h.jump_url)
 @unlock.error
 async def kick_error(ctx, error):
