@@ -46,6 +46,7 @@ catchesInBirdChannels = {}
 memoryboxpages = {}
 processing_starboard_messages = []
 mariyap = {}
+message_storage = {} # store actual message objects for the restore, reconstruct only if needed.
 
 evaluser = cfg["evaluser"]
 kreisi_links = cfg["kreisilinks"]
@@ -117,7 +118,8 @@ default_join_messages = [
 
 TICKET_BUTTON_PREFIX = "ticket_button_wow_yay:"
 RASPBERRY_BUTTON_PREFIX = "raspberry_button_whoo_hooo:"
-ver = "v1.4.6"
+RESTORE_BUTTON_PREFIX = "restore_button_yeah_ok:"
+ver = "v1.4.7"
 defaultstatus = "NeoCat Police "+ver
 if "status" in cfg:
     defaultstatus = cfg["status"]
@@ -161,6 +163,60 @@ class TicketButton(discord.ui.View):
             await thread.send(funny)
         thread_url = f"https://discord.com/channels/{interaction.guild.id}/{thread.id}"
         await log_ticket(interaction.guild, f"New Ticket! {thread_url}")
+
+class RestoreButton(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(label="Restore to thread", style=discord.ButtonStyle.secondary, custom_id=f"{RESTORE_BUTTON_PREFIX}restore_button")
+    async def restore_button_callback(self, interaction: discord.Interaction, button: discord.ui.Button):
+        global usernameCache
+
+        await interaction.response.defer()
+        if not interaction.message.embeds[0].fields or interaction.message.embeds[0].fields[0].name != "Thread":
+            return await interaction.followup.send("Cannot restore this message!", ephemeral=True)
+
+        div = interaction.message.embeds[0].fields[0].value.split("/")
+
+        guildid = int(div[-2])
+        channelid = int(div[-1][:-1]) # remove the ")"
+        guild = bot.get_guild(guildid)
+        channel = bot.get_channel(channelid)
+
+        fs = None
+        if interaction.message.content:
+            fs = interaction.message.content
+
+        if str(interaction.message.id) in message_storage:
+            message = message_storage[str(interaction.message.id)]
+        else:
+            authorname = interaction.message.embeds[0].author.name.split("'")[0]
+            if authorname in usernameCache:
+                authorid = usernameCache[authorname]
+                author = bot.get_user(authorid)
+            else:
+                av = SimpleNamespace(url=interaction.message.embeds[0].author.icon_url or None)
+                author = SimpleNamespace(id=0, name=authorname, display_name=None, global_name=None, avatar=av, display_avatar=av, bot=False)
+
+            if len(interaction.message.embeds[0].fields) == 2:
+                replylink = interaction.message.embeds[0].fields[1].value
+                replyid = replylink.split("/")[-1]
+                ref = SimpleNamespace(message_id=replyid)
+            else:
+                ref = None
+
+            message = SimpleNamespace(content=interaction.message.embeds[0].description or "", guild=guild, channel=channel, author=author, webhook_id=None, interaction_metadata=None, stickers=None, reference=ref)
+
+        files = []
+        if interaction.message.attachments:
+            for attachment in interaction.message.attachments:
+                data = await attachment.read()
+                fp = io.BytesIO(data)
+                files.append(discord.File(fp, filename=attachment.filename))
+
+        db = load_db(guildid)
+
+        db = await send_fakemsg_webhook(db, message, message.channel, files=files, fakesticker=fs)
 
 class SimpleTicketModal(discord.ui.Modal):
     def __init__(self):
@@ -266,7 +322,8 @@ async def on_ready():
 
     bot.add_view(TicketButton())
     bot.add_view(RaspberryButton())
-    print("Registered TicketButton and RaspberryButton")
+    bot.add_view(RestoreButton())
+    print("Registered TicketButton, RaspberryButton, and RestoreButton")
 
     bot.session = aiohttp.ClientSession()
     await bot.tree.sync()
@@ -674,7 +731,7 @@ async def ban(ctx: commands.Context, user: discord.User, reason: str = "None", a
                     await approval_interaction.response.edit_message(content="cant :skull:", view=None)
                     return
                 modlog(guild_id, str(user.id), ctx.user.id, reason, "ban")
-                await log_action(ctx.guild, f"{user.mention} was permanently banned by {ctx.user.mention} for `{reason}` with{out} appeal. (confirmed by {approver.mention})")
+                await log_action(ctx.guild, f"{user.mention} was permanently banned by {ctx.user.mention} for `{reason}` with{out} appeal. (confirmed by {approver.mention})", approval_interaction.message.jump_url)
                 await approval_interaction.response.edit_message(
                     content=f"{user.mention} was banned by {ctx.user.mention} for `{reason}`. (confirmed by {approver.mention})",
                     view=None,
@@ -702,7 +759,7 @@ async def ban(ctx: commands.Context, user: discord.User, reason: str = "None", a
             await interaction.response.edit_message(content="cant :skull:", view=None)
             return
         modlog(guild_id, str(user.id), ctx.user.id, reason, "ban")
-        await log_action(ctx.guild, f"{user.mention} was permanently banned by {ctx.user.mention} for `{reason}` with{out} appeal.")
+        await log_action(ctx.guild, f"{user.mention} was permanently banned by {ctx.user.mention} for `{reason}` with{out} appeal.", interaction.message.jump_url)
         await interaction.response.edit_message(
             content=f"{user.mention} was permanently banned by {ctx.user.mention} for `{reason}`.",
             view=None,
@@ -848,8 +905,8 @@ async def accept(ctx: commands.Context, user: discord.User, reason: str = "None"
         return
 
     # Send reply and log
-    await log_action(main_guild, f"<@{user.id}>'s appeal was accepted by <@{ctx.user.id}> with the reason `{reason}`.")
-    await ctx.followup.send(f"<@{user.id}>'s appeal was accepted by <@{ctx.user.id}> with the reason `{reason}`.")
+    h = await ctx.followup.send(f"<@{user.id}>'s appeal was accepted by <@{ctx.user.id}> with the reason `{reason}`.", wait=True)
+    await log_action(main_guild, f"<@{user.id}>'s appeal was accepted by <@{ctx.user.id}> with the reason `{reason}`.", h.jump_url)
 
 @tree.command(name="deny", description="Deny an appeal request and kick the user.")
 @discord.app_commands.default_permissions(kick_members=True)
@@ -886,8 +943,8 @@ async def deny(ctx: commands.Context, user: discord.User, reason: str = "None"):
 
     # Reply and log
     modlog(main_server_id, str(user.id), ctx.user.id, reason, "deny")
-    await log_action(main_guild, f"<@{user.id}>'s appeal was denied by <@{ctx.user.id}> with the reason `{reason}`.")
-    await ctx.followup.send(f"<@{user.id}>'s appeal was denied by <@{ctx.user.id}> with the reason `{reason}`.")
+    h = await ctx.followup.send(f"<@{user.id}>'s appeal was denied by <@{ctx.user.id}> with the reason `{reason}`.", wait=True)
+    await log_action(main_guild, f"<@{user.id}>'s appeal was denied by <@{ctx.user.id}> with the reason `{reason}`.", h.jump_url)
 
 @bot.event
 async def on_member_join(member: discord.Member):
@@ -983,7 +1040,7 @@ async def kick(ctx: commands.Context, user: discord.User, reason: str = "None"):
             await interaction.response.edit_message(content=f"cant :skull:", view=None)
             return
         modlog(str(ctx.guild.id), str(user.id), ctx.user.id, reason, "kick")
-        await log_action(ctx.guild, f"{user.mention} was kicked by {ctx.user.mention} for `{reason}`.")
+        await log_action(ctx.guild, f"{user.mention} was kicked by {ctx.user.mention} for `{reason}`.", interaction.message.jump_url)
         await interaction.response.edit_message(content=f"{user.mention} was kicked by {interaction.user.mention} for `{reason}`.", view=None)
 
     # Assign the callback to the button
@@ -1006,8 +1063,8 @@ async def lock(ctx: commands.Context):
     perms.send_messages_in_threads=False
     perms.create_public_threads=False
     await ctx.channel.set_permissions(ctx.guild.default_role, overwrite=perms)
-    await log_action(ctx.guild, f"🔒 {ctx.channel.mention} has been locked by {ctx.user.mention}")
-    await ctx.response.send_message(f"🔒 {ctx.channel.mention} has been locked by {ctx.user.mention}")
+    h = await ctx.response.send_message(f"🔒 {ctx.channel.mention} has been locked by {ctx.user.mention}", wait=True)
+    await log_action(ctx.guild, f"🔒 {ctx.channel.mention} has been locked by {ctx.user.mention}", h.jump_url)
 
 @lock.error
 async def kick_error(ctx, error):
@@ -1022,8 +1079,8 @@ async def unlock(ctx: commands.Context):
     perms.send_messages_in_threads=True
     perms.create_public_threads=True
     await ctx.channel.set_permissions(ctx.guild.default_role, overwrite=perms)
-    await log_action(ctx.guild, f"🔓 {ctx.channel.mention} has been unlocked by {ctx.user.mention}")
-    await ctx.response.send_message(f"🔓 {ctx.channel.mention} has been unlocked by {ctx.user.mention}")
+    h = await ctx.response.send_message(f"🔓 {ctx.channel.mention} has been unlocked by {ctx.user.mention}", wait=True)
+    await log_action(ctx.guild, f"🔓 {ctx.channel.mention} has been unlocked by {ctx.user.mention}", h.jump_url)
 @unlock.error
 async def kick_error(ctx, error):
     if isinstance(error, commands.CheckFailure):
@@ -1078,7 +1135,7 @@ async def mute(ctx: commands.Context, user: discord.User, lengh: str, reason: st
             await approval_interaction.response.edit_message(content=f"cant :skull:", view=None)
             return
         modlog(str(ctx.guild.id), str(user.id), ctx.user.id, reason, "mute", until=clock)
-        await log_action(ctx.guild, f"{user.mention} was muted until by {ctx.user.mention} for `{reason}`! This mute expires <t:{round(time.time()) + clock}:R> (confirmed by {approver.mention})")
+        await log_action(ctx.guild, f"{user.mention} was muted until by {ctx.user.mention} for `{reason}`! This mute expires <t:{round(time.time()) + clock}:R> (confirmed by {approver.mention})", approval_interaction.message.jump_url)
         await approval_interaction.response.edit_message(
             content=f"{user.mention} was muted by {ctx.user.mention} for `{reason}`! This mute expires <t:{round(time.time()) + clock}:R> (confirmed by {approver.mention})",
             view=None,
@@ -1092,8 +1149,8 @@ async def mute(ctx: commands.Context, user: discord.User, lengh: str, reason: st
             await ctx.followup.send(content=f"cant :skull:")
             return
         modlog(str(ctx.guild.id), str(user.id), ctx.user.id, reason, "mute", until=clock)
-        await log_action(ctx.guild, f"{user.mention} was muted by {ctx.user.mention} for `{reason}`! This mute expires <t:{round(time.time()) + clock}:R>")
-        await ctx.followup.send(f"{user.mention} was muted by {ctx.user.mention} for `{reason}`! This mute expires <t:{round(time.time()) + clock}:R>")
+        h = await ctx.followup.send(f"{user.mention} was muted by {ctx.user.mention} for `{reason}`! This mute expires <t:{round(time.time()) + clock}:R>", wait=True)
+        await log_action(ctx.guild, f"{user.mention} was muted by {ctx.user.mention} for `{reason}`! This mute expires <t:{round(time.time()) + clock}:R>", h.jump_url)
 
         try:
             await user.send(f"hello nerd you were muted in {ctx.guild.name} for `{reason}`. that shit will expire <t:{round(time.time()) + clock}:R>")
@@ -1277,8 +1334,8 @@ punishment on next warn: {next}. be careful."""
 
     res = f"{user.mention} was warned by {ctx.user.mention} for `{reason}`! ({totalwarnsque})"
 
-    await log_action(ctx.guild, res)
-    await ctx.followup.send(res)
+    h = await ctx.followup.send(res, wait=True)
+    await log_action(ctx.guild, res, h.jump_url)
 
     try:
         if punish:
@@ -1329,57 +1386,54 @@ async def nickname(ctx: commands.Context, user: discord.Member, new_nickname: st
     try:
         await user.edit(nick=new_nickname)
         if new_nickname == "":
-            await log_action(ctx.guild, f"{ctx.user.mention} reset {user.mention}'s nick from `{old_nickname}`.")
-            await ctx.followup.send(f"{ctx.user.mention} reset {user.mention}'s nick.")
+            h = await ctx.followup.send(f"{ctx.user.mention} reset {user.mention}'s nick.", wait=True)
+            await log_action(ctx.guild, f"{ctx.user.mention} reset {user.mention}'s nick from `{old_nickname}`.", h.jump_url)
         else:
-            await log_action(ctx.guild, f"{ctx.user.mention} renamed {user.mention} from `{old_nickname}` to `{new_nickname}`.")
-            await ctx.followup.send(f"{ctx.user.mention} renamed {user.mention} to `{new_nickname}`.")
+            h = await ctx.followup.send(f"{ctx.user.mention} renamed {user.mention} to `{new_nickname}`.", wait=True)
+            await log_action(ctx.guild, f"{ctx.user.mention} renamed {user.mention} from `{old_nickname}` to `{new_nickname}`.", h.jump_url)
     except Exception:
         await ctx.followup.send("cant :skull:")
-
-@nickname.error
-async def nickname_error(ctx, error):
-    if isinstance(error, commands.CheckFailure):
-        await ctx.response.send_message("403 forbidden", ephemeral=True)
 
 @tree.command(name="unmute", description="wtf i can talk")
 @discord.app_commands.default_permissions(moderate_members=True)
 @app_commands.describe(user="Mods, unmute this person")
 @app_commands.describe(reason="why ummute tbh")
 async def unmute(ctx: commands.Context, user: discord.User, reason: str = "None"):
-    await ctx.response.send_message(f"{user.mention} was unmuted by {ctx.user.mention} for `{reason}`.")
-    modlog(str(ctx.guild.id), str(user.id), ctx.user.id, reason, "unmute")
-    await log_action(ctx.guild, f"{user.mention} was unmuted by {ctx.user.mention} for `{reason}`!")
-    await user.timeout(None, reason=f"{reason}")
+    await ctx.response.defer()
+
+    try:
+        await user.timeout(None, reason=f"{reason}")
+        modlog(str(ctx.guild.id), str(user.id), ctx.user.id, reason, "unmute")
+        h = await ctx.response.send_message(f"{user.mention} was unmuted by {ctx.user.mention} for `{reason}`.", wait=True)
+        await log_action(ctx.guild, f"{user.mention} was unmuted by {ctx.user.mention} for `{reason}`!", h.jump_url)
+    except Exception as e:
+        return await ctx.response.send_message("cant :skull:")
+
     try:
         await user.send(f"hello nerd you were unmuted in {ctx.guild.name} for `{reason}`.")
     except Exception as e:
         print(f"Failed to send DM: {e}")
-@unmute.error
-async def kick_error(ctx, error):
-    if isinstance(error, commands.CheckFailure):
-        await ctx.response.send_message("403 forbidden", ephemeral=True)
 
 @tree.command(name="unban", description="unyeet??")
 @discord.app_commands.default_permissions(ban_members=True)
 @app_commands.describe(user="the nerd to... unyeet")
 @app_commands.describe(reason="why was the user unyeet")
 async def unban(ctx: commands.Context, user: discord.User, reason: str = "None"):
+    await ctx.response.defer()
+
     try:
         await ctx.guild.unban(user, reason=reason)
         modlog(str(ctx.guild.id), str(user.id), ctx.user.id, reason, "unban")
-        await log_action(ctx.guild, f"{user.mention} was unbanned by {ctx.user.mention} for `{reason}`!!!")
-        await ctx.response.send_message(content=f"{user.mention} was unbanned by {ctx.user.mention} for `{reason}`!!!")
+        h = await ctx.follow.send(content=f"{user.mention} was unbanned by {ctx.user.mention} for `{reason}`!!!", wait=True)
+        await log_action(ctx.guild, f"{user.mention} was unbanned by {ctx.user.mention} for `{reason}`!!!", h.jump_url)
+
     except Exception as e:
         return await ctx.response.send_message("cant :skull:")
+
     try:
         await user.send(f"hello nerd you were unbanned in {ctx.guild.name} for `{reason}`!!!")
     except Exception as e:
         print(f"couldn't DM user.'\n {e}")
-@ban.error
-async def ban_error(ctx, error):
-    if isinstance(error, commands.CheckFailure):
-        await ctx.response.send_message("403 forbidden", ephemeral=True)
 
 @tree.command(name="purge", description="timetravel moment")
 @discord.app_commands.default_permissions(manage_messages=True)
@@ -1408,14 +1462,13 @@ async def purge(ctx, purge: int, user: discord.User = None, reason: str = "None"
         await ctx.channel.delete_messages(msg)
         modlog(str(ctx.guild.id), str(user.id), str(ctx.user.id), reason, "purge", f"{purge} messages")
         res = f"Last {purge} messages from {user.mention} in {ctx.channel.mention} were purged by {ctx.user.mention} for `{reason}`."
-        await log_action(ctx.guild, res)
-        await ctx.channel.send(res)
     else:
         realpurge = purge + 1
         await ctx.channel.purge(limit=realpurge)
         res = f"Last {purge} messages in {ctx.channel.mention} were purged by {ctx.user.mention} for `{reason}`."
-        await log_action(ctx.guild, res)
-        await ctx.channel.send(res)
+
+    h = await ctx.channel.send(res)
+    await log_action(ctx.guild, res, h.jump_url)
 
 @tree.command(name="slowmode", description="change the speed of the chat")
 @discord.app_commands.default_permissions(manage_channels=True)
@@ -1436,9 +1489,10 @@ async def slowmode(ctx: commands.Context, slowmode: str):
         delay = 21600
     try:
         await ctx.channel.edit(slowmode_delay=delay)
-        await log_action(ctx.guild, f"{delay}s slowmode in {ctx.channel.mention} set by {ctx.user.mention}.")
-        await ctx.followup.send(f":zzz: Now going at {delay}s slowmode!")
+        h = await ctx.followup.send(f":zzz: Now going at {delay}s slowmode!", wait=True)
+        await log_action(ctx.guild, f"{delay}s slowmode in {ctx.channel.mention} set by {ctx.user.mention}.", h.jump_url)
     except Exception as e:
+        print(e)
         await ctx.followup.send(f"cant :skull:")
 
 class logtypes(str, enum.Enum):
@@ -1498,7 +1552,7 @@ async def log(ctx: commands.Context, type: logtypes, channel: discord.TextChanne
 
     save_db(server_id, db)
 
-async def log_action(guild: discord.Guild, content: str):
+async def log_action(guild: discord.Guild, content: str, jump_link: str = None):
     if not guild:
         return
     guild_id = str(guild.id)
@@ -1507,7 +1561,13 @@ async def log_action(guild: discord.Guild, content: str):
     if channel_id:
         channel = guild.get_channel(channel_id)
         if channel:
-            await channel.send(content, allowed_mentions=discord.AllowedMentions.none())
+            if jump_link:
+                view = View()
+                view.add_item(Button(label="Jump", url=jump_link))
+                await channel.send(content, allowed_mentions=discord.AllowedMentions.none(), view=view)
+            else:
+                await channel.send(content, allowed_mentions=discord.AllowedMentions.none())
+
 async def log_spammy(guild: discord.Guild, content: str, embeds: list = None):
     if not guild:
         return
@@ -1555,7 +1615,7 @@ async def log_ticket(guild: discord.Guild, content: str, embeds: list = None):
 @app_commands.describe(boolean="true or false value")
 @app_commands.describe(string="a word/string/text value")
 @app_commands.describe(integer="a number value")
-async def configure(ctx: commands.Context, property: Literal['disableFreakouts [boolean]', 'disableAI [boolean]', 'disableUnyap [boolean]', 'antispam [boolean]', 'aiticketresponse [boolean]', 'memoryboxyc [boolean]', 'DCmute_bird [boolean]', 'isPwarnDefault [boolean]', 'verifyOnUnjail [boolean]', 'spam_prevention [boolean]', 'hard_ban [boolean]', 'ban_underage_asap [boolean]', 'classic_appeals [boolean]', 'appeal_message [string]', 'ai_automod_prompt [string]', 'aiticketprompt [string]', 'DCTimeout_Bird [integer]', 'DCRuleNumber [integer]'], boolean: bool = None, string: str = None, integer: int = None):
+async def configure(ctx: commands.Context, property: Literal['disableFreakouts [boolean]', 'disableAI [boolean]', 'disableUnyap [boolean]', 'antispam [boolean]', 'aiticketresponse [boolean]', 'memoryboxyc [boolean]', 'DCmute_bird [boolean]', 'isPwarnDefault [boolean]', 'verifyOnUnjail [boolean]', 'spam_prevention [boolean]', 'hard_ban [boolean]', 'ban_underage_asap [boolean]', 'classic_appeals [boolean]', 'appeal_message [string]', 'ai_automod_prompt [string]', 'aiticketprompt [string]', 'cat_bot_user_id_override [string]', 'bird_user_id_override [string]', 'DCTimeout_Bird [integer]', 'DCRuleNumber [integer]'], boolean: bool = None, string: str = None, integer: int = None):
     await ctx.response.defer(ephemeral=False)
     typekey = property.replace(' [boolean]', '').replace(' [string]', '').replace(' [integer]', '')
 
@@ -1900,7 +1960,7 @@ async def on_raw_reaction_add(payload):
         try:
             channel = await bot.fetch_channel(payload.channel_id)
         except Exception as e:
-            print(f"Error in in user fetch for reaction handling, {e}")
+            print(f"Error in in channel fetch for reaction handling, {e}")
             return
 
     # get message
@@ -2011,12 +2071,17 @@ async def on_raw_reaction_add(payload):
                 if triggered:
                     reaction_count = reaction.count
 
+                    quit = False
                     users = [user async for user in reaction.users()]
                     for user in users:
                         if user.id == bot.user.id:
+                            quit = True
                             continue
                         if not selfstar and user.id == message.author.id:
                             reaction_count -= 1
+
+                    if quit:
+                        continue
 
                     if reaction_count < threshold:
                         continue
@@ -2043,7 +2108,7 @@ async def on_raw_reaction_add(payload):
     finally:
         processing_starboard_messages.remove(message.id)
 
-@tree.command(name="setforumtype", description="set a forum to a type")
+@tree.command(name="setforumtype", description="set a forum to a type (for yappingchannel/yc, mod forum, etc)")
 @commands.has_permissions(manage_guild=True)
 @discord.app_commands.default_permissions(manage_guild=True)
 @app_commands.describe(action="Whether to add or remove the forum", forum="The forum channel to modify")
@@ -2075,11 +2140,11 @@ async def yapping_city(ctx: commands.Context, action: Literal["add", "remove"], 
 @app_commands.describe(user="The user to whitelist or remove", remove="Unwhitelist the user instead")
 async def whitelist(ctx: commands.Context, user: discord.User, remove: bool = False):
     if not isinstance(ctx.channel, discord.Thread):
-        return await ctx.response.send_message("You can only run this inside a thread.")
+        return await ctx.response.send_message("GET")
 
     thread = ctx.channel
     if ctx.user.id != thread.owner_id:
-        return await ctx.response.send_message("Only the thread owner can manage the whitelist.")
+        return await ctx.response.send_message("ok bruncher")
 
     guild_id = str(ctx.guild.id)
     db = load_db(guild_id)
@@ -2102,6 +2167,25 @@ async def whitelist(ctx: commands.Context, user: discord.User, remove: bool = Fa
             await ctx.response.send_message(f"{user.mention} can now post in this thread.")
         else:
             await ctx.response.send_message(f"{user.mention} is already whitelisted.")
+
+@tree.command(name="rename", description="rename your yapping thread")
+@app_commands.describe(name="i should stop trying with these")
+async def rename_thread(ctx: commands.Context, name: str):
+    guild_id = str(ctx.guild.id)
+    db = load_db(guild_id)
+    thread = ctx.channel
+    thread_id = str(thread.id)
+    yapping_forums = db.get("yapping_forums", {})
+
+    if not isinstance(ctx.channel, discord.Thread) or not str(ctx.channel.parent_id) in yapping_forums:
+        return await ctx.response.send_message("implode", ephemeral=True)
+
+    if ctx.user.id != thread.owner_id:
+        return await ctx.response.send_message("explode", ephemeral=True)
+
+    await ctx.response.defer(ephemeral=True)
+    await thread.edit(name=name)
+    return await ctx.followup.send("ok")
 
 @tree.command(name="setroletype", description="Set a role as a type of role (mod, underage, etc) for the bot")
 @discord.app_commands.default_permissions(manage_guild=True)
@@ -2138,8 +2222,8 @@ async def setmodrole(ctx: commands.Context, role_type: Literal["admin", "mod", "
 
 @tree.command(name="setchanneltype", description="Set a channel as a type of role (slow catching, dementia, etc) for the bot")
 @discord.app_commands.default_permissions(manage_guild=True)
-@app_commands.describe(channel_type="What kind of role", channel="The channel to set")
-async def setchanneltype(ctx: commands.Context, channel_type: Literal["catching-birds", "haikus-allowed", "slow_catching", "dementia_chats", "the_ncpol_press", "one-message-go", "nonsense", "evil-dictator-chat", "banner-submissions", "no-ai", "spammy", "kinda_spammy", "starboard-blacklisted", "honeypot", "slowmode_bomb", "appeals_channel"], channel: discord.TextChannel, remove: bool = False):
+@app_commands.describe(channel_type="What kind of CHannel", channel="The channel to set")
+async def setchanneltype(ctx: commands.Context, channel_type: Literal["catching-birds", "haikus-allowed", "slow_catching", "dementia_chats", "the_ncpol_press", "one-message-go", "nonsense", "evil-dictator-chat", "banner-submissions", "no-ai", "spammy", "kinda_spammy", "starboard-blacklisted", "honeypot", "slowmode_bomb", "appeals_channel", "limited_ai"], channel: discord.TextChannel, remove: bool = False):
     await ctx.response.defer(ephemeral=False)
     guild_id = str(ctx.guild.id)
     db = load_db(guild_id)
@@ -2439,6 +2523,8 @@ async def setmod(ctx: commands.Context, user: discord.Member, level: Literal["mo
         print(f"failed to DM, {e}")
     await ctx.response.send_message(send_message)
 
+# -- context menu --
+
 @app_commands.context_menu(name="Translate")
 async def translate(interaction: discord.Interaction, message: discord.Message):
     await interaction.response.defer(ephemeral=True)
@@ -2481,16 +2567,9 @@ async def translate(interaction: discord.Interaction, message: discord.Message):
             modlog(str(interaction.guild.id), str(message.author.id), interaction.user.id, "not speaking english (via context menu)", "warn")
             translator = Translator(from_lang="en", to_lang=detected)
 
-            totalwarns = 1
-            logs = load_db(interaction.guild.id, "modlogs")
-            if str(message.author.id) in logs and "punishments" in logs[str(message.author.id)]:
-                for punishment in logs[str(message.author.id)]["punishments"]:
-                    if punishment[2] == "warn":
-                        totalwarns += 1
-
             translation2 = translator.translate("Please speak the English language. Other languages aren't allowed here. If you don't know English, use an online translator tool.")
-            await message.reply(f"Please speak the English language. Other languages aren't allowed here. If you don't know English, use an online translator tool.\n\n{translation2}")
-            await log_action(interaction.guild, f"{message.author.mention} was warned by {interaction.user.mention} for `not speaking english (via context menu)`! (#{totalwarns})")
+            h = await message.reply(f"Please speak the English language. Other languages aren't allowed here. If you don't know English, use an online translator tool.\n\n{translation2}")
+            await log_action(interaction.guild, f"{message.author.mention} was warned by {interaction.user.mention} for `not speaking english (via context menu)`!", h.jump_url)
             return
 
         warn_explain = discord.ui.Button(label=f"Warn + Explain in {detected}", style=discord.ButtonStyle.secondary)
@@ -2502,7 +2581,6 @@ async def translate(interaction: discord.Interaction, message: discord.Message):
         await interaction.followup.send(f"{translation}\n-# Translated from {detected}", ephemeral=True, view=view)
     else:
         await interaction.followup.send(f"{translation}\n-# Translated from {detected}", ephemeral=True)
-bot.tree.add_command(translate)
 
 @app_commands.context_menu(name="unyap")
 async def unyap(interaction: discord.Interaction, message: discord.Message):
@@ -2534,7 +2612,49 @@ async def unyap(interaction: discord.Interaction, message: discord.Message):
         text = "no yapping detected (most likely unsupported file format)"
 
     await interaction.followup.send(text, ephemeral=False)
+
+@app_commands.context_menu(name="delete msg (yappingcity)")
+async def yap_delete(interaction: discord.Interaction, message: discord.Message):
+    guild_id = str(message.guild.id)
+    db = load_db(guild_id)
+    thread = message.channel
+    thread_id = str(thread.id)
+    yapping_forums = db.get("yapping_forums", {})
+
+    if not isinstance(message.channel, discord.Thread) or not str(message.channel.parent_id) in yapping_forums:
+        return await interaction.response.send_message("implode", ephemeral=True)
+
+    if interaction.user.id != thread.owner_id:
+        return await interaction.response.send_message("explode", ephemeral=True)
+
+    await interaction.response.defer(ephemeral=True)
+    await message.delete()
+    return await interaction.followup.send("ok")
+
+@app_commands.context_menu(name="pin msg (yappingcity)")
+async def yap_pin(interaction: discord.Interaction, message: discord.Message):
+    guild_id = str(message.guild.id)
+    db = load_db(guild_id)
+    thread = message.channel
+    thread_id = str(thread.id)
+    yapping_forums = db.get("yapping_forums", {})
+
+    if not isinstance(message.channel, discord.Thread) or not str(message.channel.parent_id) in yapping_forums:
+        return await interaction.response.send_message("implode", ephemeral=True)
+
+    if interaction.user.id != thread.owner_id:
+        return await interaction.response.send_message("explode", ephemeral=True)
+
+    await interaction.response.defer(ephemeral=True)
+    await message.pin()
+    return await interaction.followup.send("ok")
+
+bot.tree.add_command(translate)
 bot.tree.add_command(unyap)
+bot.tree.add_command(yap_delete)
+bot.tree.add_command(yap_pin)
+
+# -- not context menu --
 
 @tree.command(name="afk", description="WE'RE DOING SOME MINING 'OFF CAMERA' WITH THIS ONE 🗣️🗣️🗣️🔥🔥🔥🔥🔥")
 @app_commands.describe(note="message for people who ping you during afk", timer="how long to wait before triggering afk")
@@ -2719,13 +2839,14 @@ async def verify(ctx: commands.Context, user: discord.Member, reason: str = "Non
     send_message = f"{user.mention} was verified by {ctx.user.mention} for `{reason}`."
     dm_message = f"hi nerd you were manually verified for `{reason}`\nWelcome to {ctx.guild.name}!"
 
-    await log_action(ctx.guild, log_message)
     modlog(str(ctx.guild.id), str(user.id), ctx.user.id, reason, "verified")
+    h = await ctx.followup.send(send_message)
+    await log_action(ctx.guild, log_message, h.jump_url)
+
     try:
         await user.send(dm_message)
     except Exception as e:
         print(f"failed to DM, {e}")
-    await ctx.followup.send(send_message)
 
     if "welcome" in db:
         if db["welcome"]["mode"] == "OnVerify":
@@ -2758,14 +2879,14 @@ async def jail(ctx: commands.Context, user: discord.Member, reason: str = "None"
     send_message = f"{user.mention} was jailed by {ctx.user.mention} for `{reason}`."
     dm_message = f"hello nerd you were jailed in {ctx.guild.name} for `{reason}`"
 
-    await log_action(ctx.guild, log_message)
     modlog(str(ctx.guild.id), str(user.id), ctx.user.id, reason, "jail")
+    h = await ctx.followup.send(send_message, wait=True)
+    await log_action(ctx.guild, log_message, h.jump_url)
 
     try:
         await user.send(dm_message)
     except Exception as e:
         print(f"failed to DM, {e}")
-    await ctx.followup.send(send_message)
 
 @tree.command(name="unjail", description="Let's go build dams and help the beavers")
 @discord.app_commands.default_permissions(moderate_members=True)
@@ -2794,41 +2915,156 @@ async def unjail(ctx: commands.Context, user: discord.Member, reason: str = "Non
     send_message = f"{user.mention} was unjailed by {ctx.user.mention} for `{reason}`."
     dm_message = f"hello nerd you were unjailed in {ctx.guild.name} for `{reason}`"
 
-    await log_action(ctx.guild, log_message)
     modlog(str(ctx.guild.id), str(user.id), ctx.user.id, reason, "unjail")
+    h = await ctx.followup.send(send_message, wait=True)
+    await log_action(ctx.guild, log_message, h.jump_url)
 
     try:
         await user.send(dm_message)
     except Exception as e:
         print(f"failed to DM, {e}")
-    await ctx.followup.send(send_message)
 
 @tree.command(name="setalt", description="toggle user having alt role")
 @discord.app_commands.default_permissions(ban_members=True)
 @app_commands.describe(user="The user to toggle")
-async def setalt(ctx: commands.Context, user: discord.Member):
+async def setalt(ctx: commands.Context, user: discord.Member, alt_of: discord.Member):
     await ctx.response.defer()
     guild_id = str(ctx.guild.id)
     db = load_db(guild_id)
+
+    db.setdefault("alts", {}) # schema will be ["alts"][str(main_id)][str(alt_id)]
 
     altroleFile = db.get("alt_role", 0)
 
     altrole = ctx.guild.get_role(int(altroleFile))
 
     if not altrole:
-        await ctx.followup.send("Alt role not found.", ephemeral=True)
-        return
+        await log_action(ctx.guild, "Warning: Alt role not found! Please set one with `/setroletype role_type:alt role:<role name>`")
 
     if altrole in user.roles:
         await user.remove_roles(altrole, reason="toggle alt OFF for user")
         res = f"{user.mention} was set as not alt by {ctx.user.mention}."
+        modlog(guild_id, user.id, ctx.user.id, "N/A", "alt", f"set to False")
+        for mainacc in db["alts"]:
+            if str(user.id) in db["alts"][mainacc]: # drop user without needing alt_of to be correct
+                db["alts"][mainacc].remove(str(user.id))
+                if not db["alts"][mainacc]:
+                    del db["alts"][mainacc]
+                break
     else:
         await user.add_roles(altrole, reason="toggle alt ON for user")
-        res = f"{user.mention} was set as alt by {ctx.user.mention}."
+        res = f"{user.mention} was set as alt of <@{alt_of.id}> by {ctx.user.mention}."
+        modlog(guild_id, user.id, ctx.user.id, "N/A", "alt", f"of <@{alt_of.id}>")
+        db["alts"].setdefault(str(alt_of.id), [])
+        db["alts"][str(alt_of.id)].append(str(user.id))
 
-    await log_action(ctx.guild, res)
+    save_db(ctx.guild.id, db)
+    h = await ctx.followup.send(res, wait=True)
+    await log_action(ctx.guild, res, h.jump_url)
 
-    await ctx.followup.send(res)
+@tree.command(name="user", description="get data about user")
+@app_commands.describe(user="The user to inspect")
+async def userinfo(ctx: commands.Context, user: discord.User):
+    await ctx.response.defer()
+    guild_id = str(ctx.guild.id)
+    db = load_db(guild_id)
+    db.setdefault("alts", {})
+
+    member = ctx.guild.get_member(user.id)
+    if member is None:
+        try:
+            member = await ctx.guild.fetch_member(user.id)
+        except Exception:
+            member = False
+
+    mod_roles = db.get("mod_roles", {})
+    mod_role = ctx.guild.get_role(int(mod_roles.get("mod"))) if mod_roles.get("mod") else None
+    admin_role = ctx.guild.get_role(int(mod_roles.get("admin"))) if mod_roles.get("admin") else None
+    junior_role = ctx.guild.get_role(int(mod_roles.get("minimod"))) if mod_roles.get("minimod") else None
+    trial_role = ctx.guild.get_role(int(mod_roles.get("trial_mod"))) if mod_roles.get("trial_mod") else None
+    functional_role = ctx.guild.get_role(int(mod_roles.get("functional_mod"))) if mod_roles.get("functional_mod") else None
+
+    is_kinda_mod = False
+    if isinstance(ctx.user, discord.Member):
+        is_kinda_mod = (
+            ctx.user.guild_permissions.moderate_members
+            or ctx.user.guild_permissions.administrator
+            or (mod_role in ctx.user.roles if mod_role else False)
+            or (admin_role in ctx.user.roles if admin_role else False)
+            or (trial_role in ctx.user.roles if trial_role else False)
+            or (junior_role in ctx.user.roles if junior_role else False)
+            or (functional_role in ctx.user.roles if functional_role else False)
+        )
+    else:
+        is_kinda_mod = False
+
+    av = None
+    if user.avatar:
+        av = user.avatar.url.replace(".webp", ".png")
+    sav = av
+    if member and member.display_avatar:
+        sav = member.display_avatar.url.replace(".webp", ".png")
+
+    n = (sav == av)
+
+    desc=[f"User ID: **`{user.id}`**"]
+
+    dtobj = datetime.fromtimestamp(discord.utils.snowflake_time(user.id).timestamp(), timezone.utc)
+    desc.append(f"Discord Join Date: **{dtobj.strftime('%B %-dth, %Y, %H:%M:%S')}**")
+    if member and member.joined_at:
+        desc.append(f"Server Join Date: **{member.joined_at.strftime('%B %-dth, %Y, %H:%M:%S')}**")
+
+    if user.global_name and str(user.global_name) != str(user.name):
+        desc.append(f"Display Name: **{user.global_name}**")
+    if member and member.nick:
+        desc.append(f"Server Nickname: **{member.nick}**")
+    if av:
+        desc.append(f"**[Avatar URL]({av})**")
+        if not n:
+            desc[-1]+=f", **[Server Avatar URL]({sav})**"
+
+    if not member:
+        desc.append("*⚠️ User is not in server!*")
+
+    if is_kinda_mod: # mod-only section
+        desc.append("") # seporator
+
+        if str(user.id) in db["alts"]:
+            h = ""
+            for acct in db["alts"][str(user.id)]:
+                h+=f" <@{acct}>,"
+            h = h[:-1] # remove trailing comma :3
+            if len(db["alts"][str(user.id)]) == 1:
+                desc.append("Alt:"+h)
+            else:
+                desc.append("Alts:"+h)
+        else:
+            for main in db["alts"]:
+                if str(user.id) in db["alts"][main]:
+                    desc.append(f"Main account: <@{main}>")
+
+        logs = load_db(str(ctx.guild.id), "modlogs")
+        if not str(user.id) in logs or not "punishments" in logs[str(user.id)]:
+            desc.append("-# No moderation logs yet")
+        else:
+            desc.append(f"Total log actions: **{len(logs[str(user.id)]['punishments'])}**")
+            la = logs[str(user.id)]['punishments'][-1]
+
+            totalwarns = 0
+            for punishment in logs[str(user.id)]["punishments"]:
+                if punishment[2] == "pwarn":
+                    if punishment[3] + 2592000 > round(time.time()):
+                        totalwarns += 1
+            if totalwarns:
+                desc.append(f"Active warns: **{totalwarns}**")
+            else:
+                desc.append(f"User has no active warns")
+            desc.append(f"Latest moderation action:\n**`{la[2]}`** by <@{la[0]}> for **`{la[1]}`** on <t:{la[3]}:s>")
+
+    embed = discord.Embed(title=str(user), description="\n".join(desc), color=user.color, timestamp=datetime.now(timezone.utc))
+    embed.set_thumbnail(url=sav)
+
+    await ctx.followup.send(embed=embed)
 
 # AI Stuff
 @tree.command(name="personality", description="sets AI personality")
@@ -2928,10 +3164,10 @@ async def on_member_update(before: discord.Member, after: discord.Member):
 async def on_app_command_error(ctx, error):
     traceback.print_exception(type(error), error, error.__traceback__)
     try:
-        await ctx.followup.send(f"500 internal server error\n-# {error}")
+        await ctx.followup.send(f"500 internal server error (something went wrong!)\n-# {error}")
     except Exception as e: # error handing my error handler
         try:
-            msg = await ctx.channel.send(f"500 internal server error\n-# {error}")
+            msg = await ctx.channel.send(f"500 internal server error (please rerun the command)\n-# {error}")
             await asyncio.sleep(10)
             await msg.delete()
         except Exception as e: # more error handing my error handler
@@ -2987,8 +3223,8 @@ async def on_message(message: discord.Message):
     if message.author == bot.user:
         return # dont respond to self
 
-    if message.webhook_id:
-        return # dont respond to webhooks
+    if message.webhook_id and not message.interaction_metadata:
+        return # dont respond to webhooks, dont ignore bots with interaction data
 
     if message.content.lower().startswith("i dislike lgb"):
         await message.reply("""hello, three things:
@@ -3024,26 +3260,26 @@ cheerio!
                 mari_is_being_annoying = False
 
             if mari_is_being_annoying:
-                mariyap[strusid].clear() # debouncing
-                await log_action(message.guild, f"<@{message.author.id}> was muted for 2 minutes by <@{bot.user.id}> for `Spam detection`.")
+                mariyap[strusid].clear() # debouncing or whateverr
+                msg = await message.channel.send(f"🔨 <@{message.author.id}> Please stop spamming!")
+                await log_action(message.guild, f"<@{message.author.id}> was muted for 2 minutes by <@{bot.user.id}> for `Spam detection`.", msg.jump_url)
                 modlog(str(message.guild.id), str(message.author.id), bot.user.id, "Spam detection", "mute", until=120)
                 try:
                     await user.timeout(timedelta(seconds=120), reason=f"{reason}")
                 except Exception:
                     await log_action(message.guild, "Mute Failed! Check Permissions.")
 
-                msg = []
+                msgs = []
                 async for m in message.channel.history():
-                    if len(msg) == 15:
+                    if len(msgs) == 15:
                         break
                     if m.author == message.author:
-                        msg.append(m)
+                        msgs.append(m)
                 try:
                     await message.channel.delete_messages(msg)
                 except Exception:
                     pass
 
-                msg = await message.channel.send(f"🔨 <@{message.author.id}> Please stop spamming!")
                 await asyncio.sleep(10)
                 await msg.delete()
 
@@ -3055,7 +3291,7 @@ cheerio!
         antispam[str(message.author.id)].setdefault("ct", "")
 
         for att in message.attachments: # AMBC Hashing
-            if "image" not in att.content_type:
+            if att.content_type and "image" not in att.content_type:
                 continue
             new_hash = await pdq_hash(att)
             distances = [hamming(new_hash, i) for i in hashes]
@@ -3101,7 +3337,7 @@ cheerio!
             member = message.guild.get_member(message.author.id)
             if member is None:
                 try:
-                        member = await message.guild.fetch_member(message.author.id)
+                    member = await message.guild.fetch_member(message.author.id)
                 except Exception:
                     garry = message.author.global_name or message.author.name
             if member is None:
@@ -3137,22 +3373,27 @@ cheerio!
                 ai_ratelimited = True
                 user_ai_ratelimits[str(message.author.id)] = int( user_ai_ratelimits[str(message.author.id)] * 1.3)
 
-        if (any(mention.id == bot.user.id for mention in message.mentions) or "@grok" in message.content or (message.channel.id in aichannels and not message.author.bot)) and not message.webhook_id and not ai_ratelimited and ai_access:
+        if db.get("limited_ai", {}).get(str(message.channel.id)):
+            ai_cond = f"<@{bot.user.id}>" in message.content
+        else:
+            ai_cond = (any(mention.id == bot.user.id for mention in message.mentions) or "@grok" in message.content or (message.channel.id in aichannels and not message.author.bot)) and not message.webhook_id
+
+        if ai_cond and not ai_ratelimited and ai_access:
             user_ai_ratelimits[str(message.author.id)] = 5
-            context = ""
             disableChains = False
             replycorrect = True
+
             if message.channel.id in aichannels: # /set system, does context things
                 disableChains = True
                 ailoglength.setdefault(str(message.channel.id), [])
-                if len(ailoglength[str(message.channel.id)]) > 50:
-                    ailoglength[str(message.channel.id)] = ailoglength[str(message.channel.id)][-50:]
-                for q in ailoglength[str(message.channel.id)]:
-                    context = context + q
+
+                while len(ailoglength[str(message.channel.id)]) > 50:
+                    del ailoglength[str(message.channel.id)][0]
+
                 if message.reference and message.reference.resolved:
                     replycorrect = (bot.user.id == message.reference.resolved.author.id) or (bot.user.id in message.mentions)
-    
-            if replycorrect: # reply chain system, disabled when /set
+
+            if replycorrect:
                 async with message.channel.typing():
                     if message.guild is None:
                         display_name = bot.user.name
@@ -3160,135 +3401,188 @@ cheerio!
                         bot_member = message.guild.me
                         display_name = bot_member.nick or bot.user.name
                     ref = message.reference
+
+                    will_mike_me = {"role": "user", "content": f"[{garry}] {message.content}"}
+
+                    for attachment in message.attachments:
+                        if attachment.content_type.startswith("image/"):
+                            im = Image.open(io.BytesIO(await attachment.read()))
+                            pn2 = io.BytesIO()
+
+                            w, h = im.size
+                            maxsize = 512
+                            xsf = w / maxsize
+                            ysf = h / maxsize
+                            if xsf > ysf:
+                                nw = maxsize
+                                nh = int(h/xsf)
+                            else:
+                                nh = maxsize
+                                nw = int(w/ysf)
+
+                            if nw < w: # downscale if smaller
+                                im = im.resize((nw,nh))
+                            im = im.convert("RGB")
+                            im.save(pn2, format='JPEG', quality=60)
+
+                            will_mike_me.setdefault("images", [])
+                            will_mike_me["images"].append(base64.b64encode(pn2.getvalue()).decode("ascii"))
     
                     chainexists = False
-                    if not disableChains:
-                        context = ""
+                    if not disableChains: # reply chain system, disabled when /set
+
                         if ref and ref.message_id:
                             chainexists = True
                             for thread in reply_chain_cache:
                                 if ref.message_id in reply_chain_cache[thread]["IDs"]:
                                     currentchain = thread
                                     break
+
                             if not currentchain is None:
-                                reply_chain_cache[currentchain]["Content"] = reply_chain_cache[currentchain]["Content"] + f"{garry}: {message.content}\n"
+                                reply_chain_cache[currentchain]["Content"].append(will_mike_me)
                                 reply_chain_cache[currentchain]["IDs"].append(message.id)
-                                if len(reply_chain_cache[currentchain]["Content"].splitlines()) > 100:
-                                    dgegeffefewew = reply_chain_cache[currentchain]["Content"].splitlines()[-100:] 
-                                    reply_chain_cache[currentchain]["Content"] = "\n".join(dgegeffefewew) + "\n"
+
+                                while len(reply_chain_cache[currentchain]["Content"]) > 100:
+                                    del reply_chain_cache[currentchain]["Content"][0]
+
                             else:
                                 global MAX_CHAIN_DEPTH
-                                itteratioens = 0
+                                iterations = 0
                                 mewhenthe = await message.channel.fetch_message(ref.message_id)
-                                chaincontent = f"{mewhenthe.author}: {mewhenthe.content}\n"
+                                chaincontent = [{"role": "user", "content": f"[{mewhenthe.author}] {mewhenthe.content}"}]
                                 chainids = [mewhenthe.id]
-                                while MAX_CHAIN_DEPTH > itteratioens and mewhenthe.reference is not None:
+
+                                while MAX_CHAIN_DEPTH > iterations and mewhenthe.reference is not None:
                                     mewhenthe = await message.channel.fetch_message(mewhenthe.reference.message_id)
                                     chainids.append(mewhenthe.id)
-                                    chaincontent = f"{mewhenthe.author}: {mewhenthe.content}\n" + chaincontent
+                                    chaincontent.append({"role": "user", "content": f"[{mewhenthe.author}] {mewhenthe.content}"})
                                     currentchain = mewhenthe.id
-                                    itteratioens += 1
+                                    iterations += 1
+                                chaincontent.reverse() # make oldest first and newest last
+
                                 reply_chain_cache[currentchain] = {"Content": chaincontent, "IDs": chainids}
+
                         else:
-                            reply_chain_cache[message.id] = {"Content": f"{garry}: {message.content}\n", "IDs": [message.id]}
+                            reply_chain_cache[message.id] = {"Content": [will_mike_me], "IDs": [message.id]}
                             currentchain = message.id
-                        context = reply_chain_cache[currentchain]["Content"]
-                    getthis = ""
-                    if message.guild:
-                        name = ai_db.get(str(message.guild.id), {}).get("name", display_name)
-                        prompt = ai_db.get(str(message.guild.id), {}).get("prompt", defaultprompt.replace(";{%!name!%};", name))
-                        getthis = str(message.guild.id)
-                    else:
-                        name = ai_db.get(str(message.author.id), {}).get("name", display_name)
-                        prompt = ai_db.get(str(message.author.id), {}).get("prompt", defaultprompt.replace(";{%!name!%};", name))
-                        getthis = str(message.author.id)
-    
-                    ctblk = ""
-                    if chainexists:
-                        ctblk = "Cited Replies:\n"
-                    if disableChains == True:
-                        try:
-                            ctblk = f"Past Messages in `#{message.channel.name}`:\n"
-                        except Exception:
-                            ctblk = f"Past Messages in Channel:\n"
-                    memories = ""
-                    ai_db.setdefault("Memories", {})
-                    ai_db["Memories"].setdefault(str(message.author.id), {})
-                    if isinstance(ai_db["Memories"][str(message.author.id)], list):
-                        ai_db["Memories"][str(message.author.id)] = {}
 
-                    if getthis in ai_db["Memories"][str(message.author.id)]:
-                        mems = ""
-                        for mem in ai_db['Memories'][str(message.author.id)][getthis]:
-                            mems += "* "+mem+"\n"
-                        memories = f"Memories stored for user: {mems}"
+                    cancel_ai = False
+                    if db.get("limited_ai", {}).get(str(message.channel.id)):
+                        if len(reply_chain_cache[currentchain]["Content"]) > 3:
+                            cancel_ai = True
 
-                    if message.guild:
-                        ctxline = f'Context:\n- You are in a Discord server called "{message.guild.name}", owned by "{message.guild.owner}".\n- Current Time in UTC: {datetime.now(timezone.utc)}'
-                    else:
-                        ctxline = f"Context:\n- You are in DMs with \"{garry}\".\n- Current Time in UTC: {datetime.now(timezone.utc)}"
-                    if ("delete" in message.content or "wipe" in message.content or "forget" in message.content or "remove" in message.content) and "memories" in message.content:
-                        wipeline = "- To wipe all memories, add exactly this on the **final line**: danger_wipe_memories\n- Only do this if the user explicitly asks you to wipe all memories"
-                    else:
-                        wipeline = ""
-                    query = f"""
+                    if not cancel_ai:
+                        getthis = ""
+                        if message.guild:
+                            name = ai_db.get(str(message.guild.id), {}).get("name", display_name)
+                            prompt = ai_db.get(str(message.guild.id), {}).get("prompt", defaultprompt.replace(";{%!name!%};", name))
+                            getthis = str(message.guild.id)
+                        else:
+                            name = ai_db.get(str(message.author.id), {}).get("name", display_name)
+                            prompt = ai_db.get(str(message.author.id), {}).get("prompt", defaultprompt.replace(";{%!name!%};", name))
+                            getthis = str(message.author.id)
+
+                        memories = ""
+                        ai_db.setdefault("Memories", {})
+                        ai_db["Memories"].setdefault(str(message.author.id), {})
+                        if isinstance(ai_db["Memories"][str(message.author.id)], list):
+                            ai_db["Memories"][str(message.author.id)] = {}
+
+                        if getthis in ai_db["Memories"][str(message.author.id)]:
+                            mems = ""
+                            for mid, mem in enumerate(ai_db['Memories'][str(message.author.id)][getthis]):
+                                mems += f"{mid+1}. {mem}\n"
+                            memories = f"Memories stored for user: {mems}"
+
+                        if message.guild:
+                            ctxline = f'You are in a Discord server called "{message.guild.name}", owned by "{message.guild.owner}" and the channel is `#{message.channel.name}`.\n- Current Time in UTC: {datetime.now(timezone.utc)}'
+                        else:
+                            ctxline = f"You are in DMs with \"{garry}\".\n- Current Time in UTC: {datetime.now(timezone.utc)}"
+                        query = f"""
 You are {name}. {prompt}
 
 {ctxline}
 
 Message formatting rules:
-1. Do NOT include mentions (<@###########>) or replies in your messages.
-2. Keep memories short and concise.
+1. Do not include mentions (<@###########>) or replies in your messages.
+2. Do not include names in square brackets.
+3. Keep memories short and concise.
 
 Memory system:
-- To save a memory for a user, add exactly this on the **final line**:
+- To save a memory for a user (if they ask you to), add exactly this on the **final line**:
   !remember [text]
 - Do not just say something was stored — always use the `!remember` command itself.
 - `!remember` must always be at the end of the line
 - Do not copy previous memories
-- Only create 1 memory at a time
-{wipeline}
+- To edit a single memory, do !edit_memory [index] [new text]
+- To delete a single memory, do !delete [index] (if a user tells you do delete a memory, do this!)
+- Do not just say something was delete — always use the `!delete` command itself.
+- To wipe all memories, use danger_wipe_memories with no punctuation or formatting.
+- you need to explicitly use the above commands to create, edit, delete, and wipe memory. Do not just claim you did this.
 
+Listed Memories:
 {memories}
-
-Additional context:
-{ctblk}{context}
-
-Now respond to this query from {garry}:
-{message.content}
 """
-                    response = await query_ollama(query)
-                    response_cleaned = response.replace("\n!remember", "!remember").replace("\ndanger_wipe_memories", "danger_wipe_memories")
-                    response_cleaned = response.replace("!remember", "\n!remember").replace("danger_wipe_memories", "\ndanger_wipe_memories")
-                    ai_db["Memories"][str(message.author.id)].setdefault(getthis, [])
-                    memlog = ""
-                    if response_cleaned.split('\n')[-1].startswith("!remember"):
-                        ai_db["Memories"][str(message.author.id)][getthis].append(response_cleaned.split('\n')[-1][10:])
-                        memlog = f"\n-# 🔮 Saved to memory: {response_cleaned.split('\n')[-1][10:]}"
-                        response_cleaned = "\n".join(response_cleaned.split("\n")[:-1])
-                        save_ai_db(ai_db)
-                    elif response_cleaned.split('\n')[-1] == "danger_wipe_memories":
-                        ai_db["Memories"][str(message.author.id)][getthis] = []
-                        memlog = "\n-# 😵 Wiped all memories!"
-                        response_cleaned = "\n".join(response_cleaned.split("\n")[:-1])
-                        save_ai_db(ai_db)
+                        hist = ailoglength[str(message.channel.id)] if disableChains else reply_chain_cache[currentchain]["Content"]
 
-                    trimmed_response = response_cleaned[:(2000)-len(memlog)] + memlog
-                    if disableChains:
-                        ailoglength[str(message.channel.id)].append(f"{garry}: {message.content}\n")
-                        ailoglength[str(message.channel.id)].append(f"{name}: {trimmed_response}\n")
-                    sent = None
+                        if disableChains:
+                            ailoglength[str(message.channel.id)].append(will_mike_me)
+                        response = await query_ollama(query, hist)
 
-                    # remove stupidass empty lines the dumb llm adds sometimes
-                    trimmed_responsex2 = remove_blank_lines(trimmed_response)
+                        response_cleaned = response.replace("\n!remember", "!remember").replace("\ndanger_wipe_memories", "danger_wipe_memories").replace("\n!edit_memory", "!edit_memory").replace("\n!delete", "!delete")
+                        response_cleaned = response.replace("!remember", "\n!remember").replace("danger_wipe_memories", "\ndanger_wipe_memories").replace("!edit_memory", "\n!edit_memory").replace("!delete", "\n!delete")
+                        ai_db["Memories"][str(message.author.id)].setdefault(getthis, [])
+                        memlog = ""
 
-                    try:
-                        sent = await message.reply(trimmed_responsex2, allowed_mentions=discord.AllowedMentions.none())
-                    except Exception:
-                        sent = await message.channel.send(trimmed_responsex2, allowed_mentions=discord.AllowedMentions.none())
-                    if currentchain is not None:
-                        reply_chain_cache[currentchain]["Content"] = reply_chain_cache[currentchain]["Content"] + f"{name}: {trimmed_response}\n"
-                        reply_chain_cache[currentchain]["IDs"].append(sent.id)
+                        lastline = response_cleaned.split('\n')[-1]
+
+                        try:
+                            if lastline.startswith("!remember"):
+                                ai_db["Memories"][str(message.author.id)][getthis].append(lastline[10:])
+                                memlog = f"\n-# 🔮 Saved to memory: {lastline[10:]}"
+                                response_cleaned = "\n".join(response_cleaned.split("\n")[:-1])
+                                save_ai_db(ai_db)
+
+                            elif lastline == "danger_wipe_memories":
+                                ai_db["Memories"][str(message.author.id)][getthis] = []
+                                memlog = "\n-# 😵 Wiped all memories!"
+                                response_cleaned = "\n".join(response_cleaned.split("\n")[:-1])
+                                save_ai_db(ai_db)
+
+                            elif lastline.startswith("!delete"):
+                                del_id = int(lastline[8:].strip())-1
+                                rem_mem = ai_db["Memories"][str(message.author.id)][getthis].pop(del_id)
+                                memlog = f"\n-# 🗑️ Deleted memory: {rem_mem}"
+                                response_cleaned = "\n".join(response_cleaned.split("\n")[:-1])
+                                save_ai_db(ai_db)
+
+                            elif lastline.startswith("!edit_memory"):
+                                splitline = lastline.split(" ", 2)
+                                edi_mem = splitline[2]
+                                del_id = int(splitline[1])-1
+                                ai_db["Memories"][str(message.author.id)][getthis][del_id] = edi_mem
+                                memlog = f"\n-# 📝 Edited memory: {edi_mem}"
+                                response_cleaned = "\n".join(response_cleaned.split("\n")[:-1])
+                                save_ai_db(ai_db)
+                        except Exception:
+                            memlog = "\n-# ⚠️ Memory operation failed!"
+
+                        trimmed_response = response_cleaned[:(2000)-len(memlog)] + memlog
+
+                        if disableChains:
+                            ailoglength[str(message.channel.id)].append({"role": "assistant", "content": trimmed_response})
+                        sent = None
+
+                        # remove stupidass empty lines the dumb llm adds sometimes
+                        trimmed_responsex2 = remove_blank_lines(trimmed_response)
+
+                        try:
+                            sent = await message.reply(trimmed_responsex2, allowed_mentions=discord.AllowedMentions.none())
+                        except Exception:
+                            sent = await message.channel.send(trimmed_responsex2, allowed_mentions=discord.AllowedMentions.none())
+                        if currentchain is not None:
+                            reply_chain_cache[currentchain]["Content"].append({"role": "assistant", "content": trimmed_response})
+                            reply_chain_cache[currentchain]["IDs"].append(sent.id)
 
         elif (any(mention.id == bot.user.id for mention in message.mentions) or "@grok" in message.content or (message.channel.id in aichannels and not message.author.bot)) and not message.webhook_id:
             if str(message.author.id) in user_ai_ratelimits:
@@ -3486,11 +3780,11 @@ Now respond to this query from {garry}:
     if db.get("slow_catching", {}).get(channel_id):
         global sleepycatch
         sentbycatbotorbird = False
-        if message.author.name == "Cat Bot" and message.author.bot:
-            if "cat has appeared" in message.content.lower():
-                sentbycatbotorbird = 1
+        if str(message.author.id) == db.get("cat_bot_user_id_override", "966695034340663367"):
+            if "cat has appeared" in message.content.lower() or (message.components and hasattr(message.components[0], 'content') and "cat has appeared" in message.components[0].content): # frick you lia
+                sentbycatbotorbird = True
 
-        if message.author.name == "bird" and message.author.bot:
+        if str(message.author.id) == db.get("bird_user_id_override", "1118256931040149626"):
             if message.embeds:
                 embed = message.embeds[0]
                 if embed.description and embed.description.strip() == 'Type "bird" to catch it!':
@@ -3584,9 +3878,12 @@ Now respond to this query from {garry}:
         if message.interaction_metadata:
             if message.interaction_metadata.user.id == thread.owner_id:
                 commandByOP = True
+            if str(thread.id) in whitelists and message.interaction_metadata.user.id in whitelists[str(thread.id)]:
+                commandByOP = True
+
         if message.author.id == thread.owner_id or commandByOP:
             deleteYcMsg = False
-        if message.webhook_id:
+        if message.webhook_id and not message.interaction_metadata:
             deleteYcMsg = False
         if str(thread.id) in whitelists and message.author.id in whitelists[str(thread.id)]:
             deleteYcMsg = False
@@ -3601,38 +3898,29 @@ Now respond to this query from {garry}:
                         files.append(discord.File(fp, filename=attachment.filename))
 
                 await message.delete()
-                embed = discord.Embed(color=discord.Color.from_str("#ff0000"))
+                embed = discord.Embed()
+
+                embed.add_field(name="Thread", value=f"[{message.channel.name}](https://discord.com/channels/{message.guild.id}/{message.channel.id})")
 
                 if message.content:
                     embed.description = message.content[:4096]
                 if message.reference:
                     embed.add_field(name="Reply to", value=message.reference.jump_url)
-                embed.set_author(name=f"{message.author}'s message was deleted", icon_url=message.author.display_avatar.url)
-                embed.set_footer(text=f"#{message.channel.name}")
+                embed.set_author(name=str(message.author), icon_url=message.author.display_avatar.url)
 
                 thread_owner = await message.guild.fetch_member(thread.owner_id)
 
-                async def restore_to_thread(interaction: discord.Interaction):
-                    nonlocal db
-                    await interaction.response.defer()
+                cont = None
+                if message.stickers:
+                    sticker = message.stickers[0]
+                    if sticker.format == StickerFormatType.gif:
+                        suffix = ".gif"
+                    else:
+                        suffix = ".png"
+                    cont = f"[{sticker.name}](https://media.discordapp.net/stickers/{sticker.id}{suffix})"
 
-                    files = []
-                    if interaction.message.attachments:
-                        for attachment in interaction.message.attachments:
-                            data = await attachment.read()
-                            fp = io.BytesIO(data)
-                            files.append(discord.File(fp, filename=attachment.filename))
-
-                    db = await send_fakemsg_webhook(db, message, message.channel, files=files)
-
-                    #webhook, db = await get_or_create_webhook(yappost, db)
-
-                restoer = discord.ui.Button(label="Restore to thread", style=discord.ButtonStyle.secondary)
-                restoer.callback = restore_to_thread
-                view = discord.ui.View()
-                view.add_item(restoer)
-
-                await thread_owner.send(embed=embed, files=files, allowed_mentions=discord.AllowedMentions.none(), view=view)
+                h = await thread_owner.send(content=cont, embed=embed, files=files, allowed_mentions=discord.AllowedMentions.none(), view=RestoreButton())
+                message_storage[str(h.id)] = message
             except Exception as e:
                 print(f"Error deleting message or sending DM: {e}")
 
@@ -3668,9 +3956,9 @@ Now respond to this query from {garry}:
         newdelay = message.channel.slowmode_delay - 1
         if newdelay < 0:
             await message.channel.delete()
-            time = discord.utils.snowflake_time(message.channel.id).timestamp()
+            mtime = discord.utils.snowflake_time(message.channel.id).timestamp()
             ctime = datetime.now().timestamp()
-            rtime = ctime-time
+            rtime = ctime-mtime
             totaldays = rtime / 86400
             await log_action(message.guild, f"`#{message.channel}` got blown up after **{round(totaldays, 2)}** days. o7\n-# <@{message.author.id}> caused the explosion. channel id was {message.channel.id}.")
         else:
@@ -3885,10 +4173,10 @@ def modlog(guildId, memberIdi, issuerId, reason, punishment, until=0):
     if memberId not in logs or not logs[memberId]:
         logs[memberId] = {}
     logs[memberId].setdefault("punishments", [])
-    if punishment in ("purge", "pwarn"): # these use until field for misc data
-        logs[memberId]["punishments"].append([issuerId, reason, punishment, timestamp, until])
-    else:
+    if punishment == "mute": # alright.
         logs[memberId]["punishments"].append([issuerId, reason, punishment, timestamp, (timestamp+until)])
+    else: # these use until field for misc data
+        logs[memberId]["punishments"].append([issuerId, reason, punishment, timestamp, until])
     save_db(guildId, logs, "modlogs")
 
 # join message functions
@@ -3975,15 +4263,17 @@ def wtfispunishment(punishments, totalwarns):
 
     return actionbang, action
 
-async def query_ollama(prompt):
+async def query_ollama(prompt, history: list = []): # include the query
     global enableAI
     if not enableAI:
         return "AI Disabled"
+
     url = ai_url
     data = {
         "model": ai_llm,
-        "prompt": prompt,
-        "stream": True
+        "messages": [{"role": "system", "content": prompt}, *history],
+        "stream": True,
+        "think": False
     }
     try:
         async with aiohttp.ClientSession() as session:
@@ -3995,7 +4285,7 @@ async def query_ollama(prompt):
                     if line:
                         try:
                             json_chunk = json.loads(line.decode())
-                            full_response += json_chunk.get("response", "")
+                            full_response += json_chunk.get("message", {}).get("content", "")
                             if json_chunk.get("done", False):
                                 break
                         except json.JSONDecodeError:
@@ -4191,7 +4481,7 @@ async def soft_ban(message: discord.Message, reason: str, spamlog: bool = False)
     except Exception:
         await log_action(message.guild, f"{message.author.mention} was NOT soft-banned because I lack perms.")
 
-async def send_fakemsg_webhook(db, message, channel, view = None, files = None):
+async def send_fakemsg_webhook(db, message, channel, view = None, files = None, fakesticker = None):
     if view is None:
         view = discord.ui.View()
 
@@ -4217,13 +4507,16 @@ async def send_fakemsg_webhook(db, message, channel, view = None, files = None):
     if message.webhook_id and not message.interaction_metadata:
         author_name = f"{message.author.display_name}"[:80]
     else:
-        author_name = f"{message.author.display_name} ({message.author})"[:80]
+        if message.author.display_name:
+            author_name = f"{message.author.display_name} ({message.author.name})"[:80]
+        else:
+            author_name = message.author.name[:80]
         avatar_url = message.author.display_avatar.url if message.author.display_avatar else None
 
     if not message.author.bot and not message.webhook_id:
         embeds = []
     else:
-        if "https://" in message.content:
+        if "https://" in message.content or "http://" in message.content: # hotlinks = no embed.
             embeds = []
         else:
             embeds = message.embeds
@@ -4247,8 +4540,28 @@ async def send_fakemsg_webhook(db, message, channel, view = None, files = None):
         omlmsg = ogmsg.content
         if ogmsg.content.startswith(f"-# ┌ {emojis['reply']}"):
             omlmsg = " ".join(ogmsg.content.splitlines()[1:])
-    
-        omlmsg = omlmsg.replace('\n', ' ')
+
+        unlinked = []
+        for q in omlmsg.split():
+            if q.startswith("http"):
+                unlinked.append("<"+q+">")
+            elif q.startswith("[") and "http" in q:
+                # replace [label](https://url.info) with [label](<https://url.info>) using some fuckass code
+                label = ""
+                seek = 0
+                while seek < len(q):
+                    label+=q[seek]
+                    if q[seek] == "]":
+                        break
+                    seek+=1
+                # label extracted
+                link = f"(<{q[len(label)+1:-1]}>)" # extract url
+                unlinked.append(label+link)
+            else:
+                unlinked.append(q)
+
+        omlmsg = " ".join(unlinked)
+
         if len(omlmsg) > 128:
             omlmsg[:125] += "..."
 
@@ -4258,18 +4571,27 @@ async def send_fakemsg_webhook(db, message, channel, view = None, files = None):
 
     if message.interaction_metadata:
         commandname = "unknown-name"
-        cmd_msg = await bot.http.request(discord.http.Route("GET", f"/channels/{message.channel.id}/messages/{message.id}")) # interaction_metadata lacks command name parameter because fuck me ig
-        if "interaction" in cmd_msg:
-            if "name" in cmd_msg["interaction"]:
-                commandname = cmd_msg["interaction"]["name"]
+        try:
+            cmd_msg = await bot.http.request(discord.http.Route("GET", f"/channels/{message.channel.id}/messages/{message.id}")) # interaction_metadata lacks command name parameter because fuck me ig
+            if "interaction" in cmd_msg:
+                if "name" in cmd_msg["interaction"]:
+                    commandname = cmd_msg["interaction"]["name"]
+        except Exception:
+            pass
 
         command_thing = f"-# ┌ {emojis['command']} **@{message.interaction_metadata.user.name}** used `/{commandname}`\n"
         message_data = command_thing + message_data
 
     content_trimmed = message_data[:2000]
 
+    if not files and not content_trimmed and not embeds:
+        if fakesticker:
+            content_trimmed = fakesticker
+        else:
+            content_trimmed = "-# no message content"
+
     # fucking discord.py
-    kwargs = {"content": content_trimmed or None, "username": author_name, "avatar_url": avatar_url, "view": view, "files": files, "wait": True, "allowed_mentions": discord.AllowedMentions.none(), "embeds": embeds}#
+    kwargs = {"content": content_trimmed or None, "username": author_name, "avatar_url": avatar_url, "view": view, "files": files, "wait": True, "allowed_mentions": discord.AllowedMentions.none(), "embeds": embeds}
     if thd is not None:
         kwargs["thread"] = thd
 
