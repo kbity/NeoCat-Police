@@ -2929,7 +2929,7 @@ async def unjail(ctx: commands.Context, user: discord.Member, reason: str = "Non
 @tree.command(name="setalt", description="toggle user having alt role")
 @discord.app_commands.default_permissions(ban_members=True)
 @app_commands.describe(user="The user to toggle")
-async def setalt(ctx: commands.Context, user: discord.Member, alt_of: discord.Member):
+async def setalt(ctx: commands.Context, user: discord.User, alt_of: discord.User):
     await ctx.response.defer()
     guild_id = str(ctx.guild.id)
     db = load_db(guild_id)
@@ -2941,7 +2941,7 @@ async def setalt(ctx: commands.Context, user: discord.Member, alt_of: discord.Me
     altrole = ctx.guild.get_role(int(altroleFile))
 
     if not altrole:
-        await log_action(ctx.guild, "Warning: Alt role not found! Please set one with `/setroletype role_type:alt role:<role name>`")
+        return await ctx.followup.send("Alt role not found! Please set one with `/setroletype role_type:alt role:<role name>`")
 
     if altrole in user.roles:
         await user.remove_roles(altrole, reason="toggle alt OFF for user")
