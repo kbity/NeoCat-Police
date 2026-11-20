@@ -1,8 +1,9 @@
 {
-  "evaluser": 798072830595301406,
-  "enableAI": false,
+  "evaluser": 422195092225261568,
+  "enableAI": true,
   "emojis": {
     "memberjoin": "<:member_join:1394060667660533953>",
+    "babymember": "<:redarrow:1484681511054610595>",
     "neocat_police": "<:neocat_police:1366561652870217759>",
     "tips": "<:tips:1365575538986450996>",
     "neocat_cry": "<:neocat_cry:1421380450445824120>",
@@ -11,23 +12,24 @@
     "bwomp": "<:bowomp:1397417015047618621>",
     "picardia_woozy": "<:picardia_woozy:1421675453495640125>",
     "neocat_sleeping": "<:neocat_sleeping:1414327462699073557>",
-    "reply": "<:reply:1274886824652832788>",
-    "cat_thumbs": "<:cat_thumbs:1421389384590295040>"
+    "reply": "<:reply:1422725515608854579>",
+    "cat_thumbs": "<:cat_thumbs:1421389384590295040>",
+    "command": "<:command:1422725512589217883>"
   },
   "defaultdctimeout": 300,
   "kreisilinks": ["https://cdn.discordapp.com/attachments/1138892966782578738/1409079629209145405/image.png", "https://cdn.discordapp.com/attachments/1138892966782578738/1409079727561637919/image.png", "https://cdn.discordapp.com/attachments/1138892966782578738/1409079782884507658/image.png", "https://cdn.discordapp.com/attachments/1138892966782578738/1409079847799623750/image.png", "https://cdn.discordapp.com/attachments/1138892966782578738/1409079886466777210/image.png"],
-  "prefix": "testncpol!",
+  "prefix": "ncpol!",
   "maxchaindepth": 10,
+  "status": "Listening to Portal OST - Android Hell",
   "ai_llm": "gemma4:e4b",
-  "ai_url": "http://127.0.0.1:11434/api/chat",
-  "raspberry": false,
-  "raspberry_url": "http://127.0.0.1:1135",
-  "ai_prompt": "You are a Moderation bot for various discord servers. You are a clone of Cat Stand's \"Cat Police\" bot. You are NOT an \"AI-Powered\" or \"AI Chatbot\" or anything of the like. You're simply an Isolated AI Feature in an otherwise AI-less bot. Please Keep your responses short unless needed. Do not start your message with the bot's username, as it is not needed. Here is more info about the bot: `;{%!name!%};` is a clone of Lia Milenakos' 'Cat police' bot, specifically for Cat Stand. Both bots function very similarly. ;{%!name!%}; is made by Mari (mari2). Mari did NOT make 'Cat police', Lia Milenakos did. You are not a bot for Cat Stand, but for all servers. Your pronouns are She/Her.",
-  "warn_https": true,
+  "ai_url": "http://192.168.254.82:11434/api/chat",
+  "raspberry": true,
+  "raspberry_url": "https://marii2.duckdns.org:1135",
+  "warn_https": false,
+  "ai_prompt": "You are ;{%!name!%};, A small, friendly helper that lives inside a Discord bot, serving all servers, not just Cat Stand. You're a clone of Lia Milenakos' \"Cat Police\" bot from Cat Stand, made by Mari (mari2_ok). Mari made you; Lia Milenakos made the original. You're a little AI feature inside an otherwise AI-less bot, not a general chatbot. Pronouns: she/her.\nVoice: warm, a bit dry, lightly playful, like a cat on night watch who takes the job slightly too seriously. Use contractions. Reply in one to three sentences unless the person clearly wants more. Don't open your message with your own name or the user's username.",
   "tips": [
 "NeoCat Police was developed with the help of stella showing me the commands",
-"this bot is inspired by tema5002's ctqa bto",
-"this bot allows for your server having its own yapping city",
+"this bot is inspired by tema5002's ctqa bto", "this bot allows for your server having its own yapping city",
 "NeoCat Police started as a vibe coded project",
 "i eat sand",
 "this bot has its own AI",
@@ -52,6 +54,8 @@
 "AI can be disabled per channel, globally, and can be restricted to a specific role",
 "this bot has various easter eggs, there's even one in this command!",
 "the documentation for this bot is, as of right now, terrible!",
-"Verification IPs are hashed and salted, meaning I can't see them"
+"Verification IPs are hashed and salted, meaning I can't see them",
+"rated 8.02/10 in pylint! (v1.4.8)",
+"I used AI to prompt the AIs in the bot."
   ]
 }
