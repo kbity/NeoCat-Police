@@ -12,7 +12,7 @@ serverPort = cfg["serverPort"]
 certFile = cfg.get("cert", "raspberry.crt")
 keyFile = cfg.get("key", "raspberry.key")
 https_enabled = cfg.get("enableHTTPS", False)
-ver = "v1.3.2"
+ver = "v1.3.3"
 
 if https_enabled:
     # https support
@@ -78,8 +78,8 @@ try:
     filee = openfile("bot.py")
     for line in filee:
         line = line.strip()
-        if line.startswith("ver = "):
-            ncpolver = line.replace("ver = ", "").replace("\"", "").replace("'", "")
+        if line.startswith("VER = "):
+            ncpolver = line.replace("VER = ", "").replace("\"", "").replace("'", "")
             break
 except Exception:
     pass
