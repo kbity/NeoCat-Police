@@ -56,6 +56,12 @@
 "the documentation for this bot is, as of right now, terrible!",
 "Verification IPs are hashed and salted, meaning I can't see them",
 "rated 8.02/10 in pylint! (v1.4.8)",
-"I used AI to prompt the AIs in the bot."
+"I used AI to prompt the AIs in the bot.",
+"you can DM the bot and talk to the AI",
+"the bot can ban you for spamming 4 urls in multiple channels in sequence if scam detection is on",
+"the text command, ncpol!test, unlike all other text commands, is not owner-only",
+"there's a few subtle references to MariLink inside the source code",
+"there's a secret info page on the verification website",
+"the AI, by default, takes on the bot's server nickname as its name"
   ]
 }
