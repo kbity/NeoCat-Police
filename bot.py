@@ -31,6 +31,7 @@ import os
 import sys
 import base64
 import math
+import unicodedata
 
 # Other Extra Stlib imports
 from datetime import datetime, timezone, timedelta
@@ -170,7 +171,7 @@ default_join_messages = [
 TICKET_BUTTON_PREFIX = "ticket_button_wow_yay:"
 RASPBERRY_BUTTON_PREFIX = "raspberry_button_whoo_hooo:"
 RESTORE_BUTTON_PREFIX = "restore_button_yeah_ok:"
-VER = "v1.4.8"
+VER = "v1.4.9"
 defaultstatus = "NeoCat Police "+VER
 if "status" in cfg:
     defaultstatus = cfg["status"]
@@ -495,7 +496,8 @@ async def kill_berry():
 
 @tree.command(name="ping", description="tests roundtrip latency")
 async def ping(ctx: commands.Context):
-    await ctx.response.send_message(f"{emojis['neocat_police']} Pong!! neocat brain has a latency of {round(bot.latency *1000)} ms")
+    await ctx.response.defer(ephemeral=False)
+    await ctx.followup.send(f"{emojis['neocat_police']} Pong!! neocat brain has a latency of {round(bot.latency *1000)} ms")
 
 @tree.command(name="memorybox", description="view a random image you sent in the past")
 async def memorybox(ctx: commands.Context):
@@ -1127,10 +1129,10 @@ async def unlock(ctx: commands.Context):
 @tree.command(name="mute", description="hahah imagine being a mute")
 @discord.app_commands.default_permissions(moderate_members=True)
 @app_commands.describe(user="your free trial of talking has ended")
-@app_commands.describe(lengh="lengh of no yap perms (e.g. 7d)")
+@app_commands.describe(length="length of no yap perms (e.g. 7d)")
 @app_commands.describe(reason="i muted you becuz your annoying")
 @discord.app_commands.autocomplete(reason=reason_autocomplete)
-async def mute(ctx: commands.Context, user: discord.User, lengh: str, reason: str = "None"):
+async def mute(ctx: commands.Context, user: discord.User, length: str, reason: str = "None"):
     await ctx.response.defer()
     guild_id = str(ctx.guild.id)
     db = load_db(guild_id)
@@ -1147,7 +1149,7 @@ async def mute(ctx: commands.Context, user: discord.User, lengh: str, reason: st
         or (minimod_role in ctx.user.roles if minimod_role else False)
     )
 
-    clock = convert_time_to_seconds(lengh)
+    clock = convert_time_to_seconds(length)
 
     async def approve_button_callback(approval_interaction: discord.Interaction):
         approver = approval_interaction.user
@@ -2029,8 +2031,9 @@ async def on_raw_reaction_add(payload):
 
             for reaction in message.reactions:
                 triggered = str(reaction.emoji) == emoji
-                if not triggered and allowgenerics and not is_unicode and (reaction.emoji.name == emoji.split(":")[1]):
-                    triggered = True
+                if hasattr(reaction.emoji, "name"):
+                    if all((not triggered, allowgenerics, (reaction.emoji.name == emoji.split(":")[1]))):
+                        triggered = True
 
                 if triggered:
                     reaction_count = reaction.count
@@ -2072,37 +2075,37 @@ async def on_raw_reaction_add(payload):
     finally:
         processing_starboard_messages.remove(message.id)
 
-@tree.command(name="setforumtype", description="set a forum to a type (for yappingchannel/yc, mod forum, etc)")
+@tree.command(name="setforumtype", description="set a forum to a type (yappingchannel/yc, mod forum, etc)")
 @commands.has_permissions(manage_guild=True)
 @discord.app_commands.default_permissions(manage_guild=True)
 @app_commands.describe(action="Whether to add or remove the forum", forum="The forum channel to modify")
-async def yapping_city(ctx: commands.Context, action: Literal["add", "remove"], forum: discord.ForumChannel, typee: Literal["yapping_forums", "mod_forum"]):
+async def yapping_city(ctx: commands.Context, action: Literal["add", "remove"], forum: discord.ForumChannel, type: Literal["yapping_forums", "mod_forum"]):
     await ctx.response.defer()
     guild_id = str(ctx.guild.id)
     db = load_db(guild_id)
     forum_id = str(forum.id)
 
-    db.setdefault(typee, {})
+    db.setdefault(type, {})
 
     if action == "add":
-        db[typee][forum_id] = True
-        res = f"{ctx.user.mention} set {forum.mention} as a `{typee}`"
+        db[type][forum_id] = True
+        res = f"{ctx.user.mention} set {forum.mention} as a `{type}`"
         await ctx.followup.send(res, ephemeral=False)
         await log_action(ctx.guild, res)
     elif action == "remove":
         if forum_id in db["yapping_forums"]:
             del db["yapping_forums"][forum_id]
-            res = f"{ctx.user.mention} unset {forum.mention} as a `{typee}`"
+            res = f"{ctx.user.mention} unset {forum.mention} as a `{type}`"
             await ctx.followup.send(res, ephemeral=False)
             await log_action(ctx.guild, res)
         else:
-            await ctx.followup.send(f"{forum.mention} is not a `{typee}`, idiot.", ephemeral=False)
+            await ctx.followup.send(f"{forum.mention} is not a `{type}`, idiot.", ephemeral=False)
 
     save_db(guild_id, db)
 
-@tree.command(name="whitelist", description="Allow or remove someone from talking in your Yapping City post")
-@app_commands.describe(user="The user to whitelist or remove", remove="Unwhitelist the user instead")
-async def whitelist_cmd(ctx: commands.Context, user: discord.User, remove: bool = False):
+@tree.command(name="whitelist", description="Toggle someone's ability to talk in your Yapping City post")
+@app_commands.describe(user="The user to whitelist or remove")
+async def whitelist_cmd(ctx: commands.Context, user: discord.User):
     if not isinstance(ctx.channel, discord.Thread):
         return await ctx.response.send_message("GET")
 
@@ -2117,20 +2120,14 @@ async def whitelist_cmd(ctx: commands.Context, user: discord.User, remove: bool 
     db.setdefault("whitelists", {}).setdefault(thread_id, [])
     whitelist = db["whitelists"][thread_id]
 
-    if remove:
-        if user.id in whitelist:
-            whitelist.remove(user.id)
-            save_db(guild_id, db)
-            await ctx.response.send_message(f"{user.mention} has been removed from the whitelist.")
-        else:
-            await ctx.response.send_message(f"{user.mention} is not on the whitelist.")
+    if user.id in whitelist:
+        whitelist.remove(user.id)
+        save_db(guild_id, db)
+        await ctx.response.send_message(f"{user.mention} has been removed from the whitelist.")
     else:
-        if user.id not in whitelist:
-            whitelist.append(user.id)
-            save_db(guild_id, db)
-            await ctx.response.send_message(f"{user.mention} can now post in this thread.")
-        else:
-            await ctx.response.send_message(f"{user.mention} is already whitelisted.")
+        whitelist.append(user.id)
+        save_db(guild_id, db)
+        await ctx.response.send_message(f"{user.mention} can now post in this thread.")
 
 @tree.command(name="rename", description="rename your yapping thread")
 @app_commands.describe(name="i should stop trying with these")
@@ -2153,7 +2150,7 @@ async def rename_thread(ctx: commands.Context, name: str):
 @tree.command(name="setroletype", description="Set a role as a type of role (mod, underage, etc) for the bot")
 @discord.app_commands.default_permissions(manage_guild=True)
 @app_commands.describe(role_type="What kind of role", role="The role to set")
-async def setmodrole(ctx: commands.Context, role_type: Literal["admin", "mod", "minimod", "trial_mod", "functional_mod", "underage", "verified", "ai", "jail", "alt"], role: discord.Role, remove: bool = False):
+async def setmodrole(ctx: commands.Context, role_type: Literal["admin", "mod", "minimod", "trial_mod", "functional_mod", "underage", "verified", "ai", "jail", "alt"], role: discord.Role = None):
     await ctx.response.defer()
     guild_id = str(ctx.guild.id)
     db = load_db(guild_id)
@@ -2162,115 +2159,113 @@ async def setmodrole(ctx: commands.Context, role_type: Literal["admin", "mod", "
     if notmodrole:
         role_type += "_role"
 
-    if remove:
+    if role is None:
         if not notmodrole:
             db.setdefault("mod_roles", {})
             db["mod_roles"].pop(role_type, None)
         else:
             db.setdefault(role_type)
             db.pop(role_type, None)
-        whatdidido = f"{ctx.user.mention} unset the `{role_type}` role."
+        res = f"{ctx.user.mention} unset the `{role_type}` role."
     else:
         if not notmodrole:
             db.setdefault("mod_roles", {})
             db["mod_roles"][role_type] = str(role.id)
         else:
             db[role_type] = str(role.id)
-        whatdidido = f"{ctx.user.mention} set {role.mention} as the `{role_type}` role."
+        res = f"{ctx.user.mention} set {role.mention} as the `{role_type}` role."
 
     save_db(guild_id, db)
 
-    await log_action(ctx.guild, whatdidido)
-    await ctx.followup.send(whatdidido, ephemeral=False)
+    await log_action(ctx.guild, res)
+    await ctx.followup.send(res, ephemeral=False)
 
 @tree.command(name="setchanneltype", description="Set a channel as a type of role (slow catching, dementia, etc) for the bot")
 @discord.app_commands.default_permissions(manage_guild=True)
 @app_commands.describe(channel_type="What kind of CHannel", channel="The channel to set")
-async def setchanneltype(ctx: commands.Context, channel_type: Literal["catching-birds", "haikus-allowed", "slow_catching", "dementia_chats", "the_ncpol_press", "one-message-go", "nonsense", "evil-dictator-chat", "banner-submissions", "no-ai", "spammy", "kinda_spammy", "starboard-blacklisted", "honeypot", "slowmode_bomb", "appeals_channel", "limited_ai"], channel: discord.TextChannel, remove: bool = False):
+async def setchanneltype(ctx: commands.Context, channel_type: Literal["catching-birds", "haikus-allowed", "slow_catching", "dementia_chats", "the_ncpol_press", "one-message-go", "nonsense", "evil-dictator-chat", "banner-submissions", "no-ai", "spammy", "kinda_spammy", "starboard-blacklisted", "honeypot", "slowmode_bomb", "appeals_channel", "limited_ai"], channel: discord.TextChannel):
     await ctx.response.defer(ephemeral=False)
     guild_id = str(ctx.guild.id)
     db = load_db(guild_id)
     channel_id = str(channel.id)
-    db.setdefault(channel_type, {})
+    single_channels = ("the_ncpol_press", "appeals_channel") # there can only be one of these types, they're seperate config keys
+    isc = channel_type in single_channels
 
-    if not remove:
-        whatdidido = f"{ctx.user.mention} set {channel.mention} as a `{channel_type}` channel."
-        if channel_type in ("the_ncpol_press", "appeals_channel"):
+    remove = False
+    if isc:
+        if channel_type in db:
+            remove = True
+    elif channel_id in db[channel_type]:
+        db.setdefault(channel_type, {})
+        if db[channel_type][channel_id]:
+            remove = True
+
+    if remove:
+        res = f"{ctx.user.mention} unset {channel.mention} as a `{channel_type}` channel."
+        if isc:
+            del db[channel_type]
+        else:
+            del db[channel_type][channel_id]
+    else:
+        res = f"{ctx.user.mention} set {channel.mention} as a `{channel_type}` channel."
+        if isc:
             db[channel_type] = channel.id
         else:
             db[channel_type][channel_id] = True
             if channel_type == "slowmode_bomb":
                 await channel.edit(slowmode_delay=21600)
-    else:
-        whatdidido = f"{ctx.user.mention} unset {channel.mention} as a `{channel_type}` channel."
-        if channel_type in ("the_ncpol_press", "appeals_channel"):
-            try:
-                del db[channel_type]
-            except:
-                await ctx.followup.send(f"{channel.mention} is not marked as a `{channel_type}` channel, or there was an error.")
-                return
-        else:
-            if channel_id in db[channel_type]:
-                del db[channel_type][channel_id]
-            else:
-                await ctx.followup.send(f"{channel.mention} is not marked as a `{channel_type}` channel, idiot.")
-                return
 
     save_db(guild_id, db)
-
-    await log_action(ctx.guild, whatdidido)
-    await ctx.followup.send(whatdidido)
+    await log_action(ctx.guild, res)
+    await ctx.followup.send(res)
 
 @tree.command(name="set_honeypot", description="Set a voice honeypot channel for the bot")
 @discord.app_commands.default_permissions(manage_guild=True)
 @app_commands.describe(channel="The channel to set")
-async def set_honeypot(ctx: commands.Context, channel: discord.VoiceChannel, remove: bool = False):
-    channel_type = "honeypot"
-
+async def set_honeypot(ctx: commands.Context, channel: discord.VoiceChannel):
     await ctx.response.defer(ephemeral=False)
     guild_id = str(ctx.guild.id)
     db = load_db(guild_id)
     channel_id = str(channel.id)
-    db.setdefault(channel_type, {})
+    db.setdefault("honeypot", {})
 
-    if not remove:
-        whatdidido = f"{ctx.user.mention} set {channel.mention} as a `{channel_type}` channel."
-        db[channel_type][channel_id] = True
+    remove = False
+    if channel_id in db["honeypot"]:
+        if db["honeypot"][channel_id]:
+            remove = True
+
+    if remove:
+        res = f"{ctx.user.mention} unset {channel.mention} as a `honeypot` channel."
+        del db["honeypot"][channel_id]
     else:
-        whatdidido = f"{ctx.user.mention} unset {channel.mention} as a `{channel_type}` channel."
-
-        if channel_id in db[channel_type]:
-            del db[channel_type][channel_id]
-        else:
-            await ctx.followup.send(f"{channel.mention} is not marked as a `{channel_type}` channel, idiot.")
-            return
+        res = f"{ctx.user.mention} set {channel.mention} as a `honeypot` channel."
+        db["honeypot"][channel_id] = True
 
     save_db(guild_id, db)
-
-    await log_action(ctx.guild, whatdidido)
-    await ctx.followup.send(whatdidido)
+    await log_action(ctx.guild, res)
+    await ctx.followup.send(res)
 
 @tree.command(name="sticky-message", description="Set a message to be sticky in the current channel")
 @discord.app_commands.default_permissions(manage_guild=True)
-@app_commands.describe(message="message to set as sticky", remove="set this to remove")
-async def sticky_message(ctx: commands.Context, message: str = "this is a sticky message", remove: bool = False):
+@app_commands.describe(message="message to set as sticky")
+async def sticky_message(ctx: commands.Context, message: str = None):
     await ctx.response.defer()
     guild_id = str(ctx.guild.id)
     db = load_db(guild_id)
     db.setdefault("stickies", {})
 
-    if remove:
-        res = db["stickies"][str(ctx.channel.id)]
-        db["stickies"].pop(str(ctx.channel.id), None)
-        whatdidido = f"{ctx.user.mention} unstickied `{res}` in <#{ctx.channel.id}>."
-    else:
+    if message:
         db["stickies"][str(ctx.channel.id)] = message
-        whatdidido = f"{ctx.user.mention} stickied `{message}` in <#{ctx.channel.id}>."
+        res = f"{ctx.user.mention} stickied `{message}` in <#{ctx.channel.id}>."
+    else:
+        msg = db["stickies"][str(ctx.channel.id)]
+        db["stickies"].pop(str(ctx.channel.id), None)
+        res = f"{ctx.user.mention} unstickied `{msg}` from <#{ctx.channel.id}>."
 
     save_db(guild_id, db)
 
-    await log_action(ctx.guild, whatdidido)
-    await ctx.followup.send(whatdidido, ephemeral=False)
+    await log_action(ctx.guild, res)
+    await ctx.followup.send(res, ephemeral=False)
 
 # this command is stolen from cat bot but who cares
 @bot.tree.command(description="Change NeoCat Police avatar")
@@ -2303,7 +2298,7 @@ async def changeavatar(message: discord.Interaction, avatar: Optional[discord.At
 @tree.command(name="reactroles", description=":insane:")
 @discord.app_commands.default_permissions(manage_guild=True)
 @app_commands.describe(message_id="ID of message (or link maybe)", role="role", emoji=":emoji_13:")
-async def react_roles(ctx: commands.Context, message_id: str, emoji: str, role: discord.Role, remove: bool = False):
+async def react_roles(ctx: commands.Context, message_id: str, emoji: str, role: discord.Role = None):
     await ctx.response.defer(ephemeral=False)
     guild_id = str(ctx.guild.id)
     db = load_db(guild_id)
@@ -2322,50 +2317,39 @@ async def react_roles(ctx: commands.Context, message_id: str, emoji: str, role: 
         await ctx.followup.send(f"sorry but your message is fake (command needs to be run in react role channel)\n-# {e}", ephemeral=True)
         return
 
-    whatdidido = "some funny ass thing happened idfk whats going on this message shouldnt appear. it will be hell if it does."
+    res = "some funny ass thing happened idfk whats going on this message shouldnt appear. it will be hell if it does."
 
-    if not remove:
-        whatdidido = f"{ctx.user.mention} set {emoji} {role.mention} as a react role for https://discord.com/channels/{ctx.guild.id}/{ctx.channel.id}/{message_id}"
+    if role is None:
+        if emoji not in db["reactroles"][str(message_id)]:
+            return await ctx.followup.send("bro what")
+        role_id = db["reactroles"][str(message_id)].pop(emoji, None)
+        res = f"{ctx.user.mention} unset {emoji} <@&{role_id}> as a react role for https://discord.com/channels/{ctx.guild.id}/{ctx.channel.id}/{message_id}"
+    else:
+        res = f"{ctx.user.mention} set {emoji} {role.mention} as a react role for https://discord.com/channels/{ctx.guild.id}/{ctx.channel.id}/{message_id}"
         db["reactroles"][str(message_id)][emoji] = str(role.id)
         if emoji[0:1] == "<":
-            endscorrect = emoji[(len(emoji)-1):(len(emoji))] == ">"
-            validchars = re.match(r'^[\w\-<:>]+$', emoji) is not None
-            namestart = emoji[1:2] == ":" or emoji[1:2] == "a"
-            goodlen = len(emoji) > 22
-            lastsecnums = re.fullmatch(r'\d+', ((emoji.rsplit(":", 1)[-1])[:(len((emoji.rsplit(":", 1)[-1]))-1)])) is not None
-            secondsection = len(emoji.split(":")) == 3 and emoji.split(":")[1] != ""
-
-            valid = endscorrect and validchars and namestart and goodlen and lastsecnums and secondsection
+            valid = discord.PartialEmoji.from_str(emoji).is_custom_emoji()
             if not valid:
-                await ctx.followup.send("vro that's not an emoji", ephemeral=True)
-                return
+                return await ctx.followup.send("vro that's not an emoji", ephemeral=True)
         else:
             print(emoji)
             print(contains_symbols(emoji))
             if contains_symbols(emoji):
-                await ctx.followup.send("vro that's not an emoji", ephemeral=True)
-                return
-    else:
-        if emoji not in db["reactroles"][str(message_id)]:
-            return await ctx.followup.send("bro what")
-        whatdidido = f"{ctx.user.mention} unset {emoji} {role.mention} as a react role for https://discord.com/channels/{ctx.guild.id}/{ctx.channel.id}/{message_id}"
-        db["reactroles"][str(message_id)].pop(emoji, None)
+                return await ctx.followup.send("vro that's not an emoji", ephemeral=True)
 
     try:
-        if remove:
+        if role is None:
             await message.remove_reaction(discord.PartialEmoji.from_str(emoji), bot.user)
         else:
             await message.add_reaction(emoji)
     except Exception as e:
         if str(e) == "400 Bad Request (error code: 10014): Unknown Emoji":
-            await ctx.followup.send("failed to add reaction. emoji either malformed or the bot isn't in the server with the emoji", ephemeral=True)
-        else:
-            await ctx.followup.send(f"failed to add/remove reaction.\n-# {e}", ephemeral=True)
-        return
+            return await ctx.followup.send("failed to add reaction. emoji either malformed or the bot isn't in the server with the emoji", ephemeral=True)
+        return await ctx.followup.send(f"failed to add/remove reaction.\n-# {e}", ephemeral=True)
     save_db(guild_id, db)
 
-    await log_action(ctx.guild, whatdidido)
-    await ctx.followup.send(whatdidido, ephemeral=False, allowed_mentions=discord.AllowedMentions.none())
+    await log_action(ctx.guild, res)
+    await ctx.followup.send(res, ephemeral=False, allowed_mentions=discord.AllowedMentions.none())
 
 @tree.command(name="toggle-ticket-mentions", description="enable or disable ticket pings (command)")
 @discord.app_commands.default_permissions(manage_threads=True)
@@ -2377,14 +2361,14 @@ async def togglementions(ctx: commands.Context):
 
     if not user_id in db["mod_ticket_pings"]:
         db["mod_ticket_pings"].append(user_id)
-        whatdidido = "You will now be notified for ticket opens."
+        res = "You will now be notified for ticket opens."
     else:
         db["mod_ticket_pings"].remove(user_id)
-        whatdidido = "You will no longer be notified for ticket opens."
+        res = "You will no longer be notified for ticket opens."
 
     save_db(guild_id, db)
 
-    await ctx.response.send_message(whatdidido, ephemeral=True)
+    await ctx.response.send_message(res, ephemeral=True)
 
 @tree.command(name="setmod", description="Assign or remove a mod or minimod role from a user")
 @discord.app_commands.default_permissions(manage_guild=True)
@@ -2672,15 +2656,13 @@ async def welcomecfg(ctx: commands.Context, mode: Literal["Disabled", "OnJoin", 
     if mode == "Disabled":
         db.pop("welcome", None)
         save_db(str(ctx.guild.id), db)
-        await ctx.response.send_message("Welcome Messages Disabled.")
-        return
+        return await ctx.response.send_message("Welcome Messages Disabled.")
 
     db["welcome"]["mode"] = mode
     if channel is None:
         db.pop("welcome", None)
         save_db(str(ctx.guild.id), db)
-        await ctx.response.send_message("Welcome Messages Disabled.")
-        return
+        return await ctx.response.send_message("Welcome Messages Disabled.")
 
     db["welcome"]["channel"] = channel.id
     if emoji == "Default":
@@ -2703,9 +2685,8 @@ async def welcomecfg(ctx: commands.Context, mode: Literal["Disabled", "OnJoin", 
 @tree.command(name="welcome-message", description="add your most noectqastic seen-zhuh messages here")
 @discord.app_commands.default_permissions(manage_guild=True)
 @app_commands.describe(mode="what thing you are doing??")
-@app_commands.describe(start="start for message (put these in quotes), or index for deletion")
-@app_commands.describe(end="end for message (put these in quotes). only used in add mode.")
-async def welcome_cmd(ctx: commands.Context, mode: Literal["Clear", "Add", "Delete", "Pull", "List"] = "List", start: str = "Default", end: str = "Default"):
+@app_commands.describe(msg_or_idx="welcome message (with {user} being the username) or index for deletion")
+async def welcome_cmd(ctx: commands.Context, mode: Literal["Clear", "Add", "Delete", "Pull", "List"] = "List", msg_or_idx: str = None):
     db = load_db(str(ctx.guild.id))
     if mode != "List":
         db.setdefault("welcome", {}).setdefault("messages", [[f"Welcome to {ctx.guild.name}, ", "! Enjoy your stay."]])
@@ -2713,42 +2694,37 @@ async def welcome_cmd(ctx: commands.Context, mode: Literal["Clear", "Add", "Dele
     if mode == "Clear":
         db["welcome"].pop("messages", None)
         save_db(str(ctx.guild.id), db)
-        await ctx.response.send_message("Custom Welcome Messages Cleared.")
-        return
+        return await ctx.response.send_message("Custom Welcome Messages Cleared.")
 
     if mode == "Add":
-        if start == "Default" or end == "Default":
-            await ctx.response.send_message(f"I'd personally not want you to add 'Default{ctx.user.mention}Default' as a welcome message accidentally.\n-# HINT: start goes before mention, end goes after mention. not seporated with spaces by default")
-            return
-        db["welcome"]["messages"].append([start[1:(len(start)-1)], end[1:(len(end)-1)]])
+        welc_msg = [] if msg_or_idx is None else msg_or_idx.split("{user}")
+        if len(welc_msg) != 2:
+            return await ctx.response.send_message("Please specify a welcome message in this format: `Hello, {user}! Enjoy your stay!`.")
+
+        db["welcome"]["messages"].append(welc_msg)
         save_db(str(ctx.guild.id), db)
-        await ctx.response.send_message(f"Welcome Message `{start[1:(len(start)-1)]}@{ctx.user.name}{end[1:(len(end)-1)]}` Added.")
-        return
+        return await ctx.response.send_message(f"Welcome Message `{welc_msg[0]}@{ctx.user.name}{welc_msg[1]}` Added.")
 
     if mode == "Delete":
-        try:
-            integer = int(start)
-        except Exception:
-            await ctx.response.send_message("bro that's not a number")
-            return
-        fungus = db["welcome"]["messages"][integer]
-        try:
-            db["welcome"]["messages"].pop(integer)
-        except Exception:
-            await ctx.response.send_message("bro there isnt that many messages are you drunk")
-            return
+        if not msg_or_idx:
+            return await ctx.response.send_message("Please specify the index of the welcome message you wish to delete. You can find these in `/welcome-message mode: List`.")
+        if not msg_or_idx.isdigit():
+            return await ctx.response.send_message("bro that's not a number")
+        integer = int(msg_or_idx)
+        if integer >= len(db["welcome"]["messages"]):
+            return await ctx.response.send_message("bro there isnt that many messages are you drunk")
+        fungus = db["welcome"]["messages"].pop(integer)
+
         if len(db["welcome"]["messages"]) == 0:
             db["welcome"].pop("messages", None)
         save_db(str(ctx.guild.id), db)
-        await ctx.response.send_message(f"Removed message `{fungus[0]}@{ctx.user.name}{fungus[1]}`")
-        return
+        return await ctx.response.send_message(f"Removed message `{fungus[0]}@{ctx.user.name}{fungus[1]}`")
 
     if mode == "Pull":
         for msg in default_join_messages:
             db["welcome"]["messages"].append(msg)
         save_db(str(ctx.guild.id), db)
-        await ctx.response.send_message("Populated Custom List with the defaults!")
-        return
+        return await ctx.response.send_message("Populated Custom List with the defaults!")
 
     if mode == "List":
         db.setdefault("welcome", {}).setdefault("messages", default_join_messages)
@@ -2759,8 +2735,7 @@ async def welcome_cmd(ctx: commands.Context, mode: Literal["Clear", "Add", "Dele
             output = output+f"\n{x}. {msg[0]}@{ctx.user.name}{msg[1]}"
             x += 1
         output = output+"\n```"
-        await ctx.response.send_message(output)
-        return
+        return await ctx.response.send_message(output)
 
 @tree.command(name="verify", description="twitter checkmark chaotic good version")
 @discord.app_commands.default_permissions(ban_members=True)
@@ -3390,11 +3365,7 @@ Listed Memories:
                             await message.channel.send(trimmed_response, allowed_mentions=discord.AllowedMentions.none())
         elif random.randint(1, 1000) == 1 or message.content == "ncpol!dothathingirember" and message.author.id == evaluser:
             if "the_ncpol_press" in db:
-                try:
-                    channel = bot.get_channel(db["the_ncpol_press"])
-                except:
-                    print("getting channel error screw you")
-                    return
+                channel = bot.get_channel(db["the_ncpol_press"])
                 async with channel.typing():
                     messages = [msg async for msg in message.channel.history(limit=20)]
                     messages.reverse()
@@ -3484,6 +3455,14 @@ async def on_guild_join(guild):
     except Exception:
         pass
 
+def text_cleanup(inpt: str):
+    clean = unicodedata.normalize("NFKD", inpt.lower()).casefold()
+    fully_clean = []
+    for l in clean:
+        if l in "abcdefghijklmnopqrstuvwxyz":
+            fully_clean.append(l)
+    return "".join(fully_clean)
+
 @bot.event
 async def on_message(message: discord.Message):
     if message.author == bot.user:
@@ -3492,7 +3471,8 @@ async def on_message(message: discord.Message):
     if message.webhook_id and not message.interaction_metadata:
         return # dont respond to webhooks, dont ignore bots with interaction data
 
-    if message.content.lower().startswith("i dislike lgb"):
+    cleaned_message = text_cleanup(message.content) # removes all non-alphabet text and outputs all lowercase
+    if cleaned_message.startswith(("idislikelgb", "idontlikelgb", "idonotlikelgb")):
         await message.reply("""hello, three things:
 - neocat police is developed by an lgbtq person; this server should be a welcoming community and anyone who tries to make it anything else should be obliterated from existence here. however, if this server does not want to be a welcoming community, please kindly remove this bot and use a bot such as dyno or carl-bot.
 - if you don't support lgbtq for whatever reason, whether it's religious or otherwise, keep it to yourself! it costs you $0 and takes less effort to not spread that opinion in a space, and you will be a much better person for it!! saying things like "i dont like lgbtq" adds nothing to the conversation, vilifies yourself, and will most likely just get you banned from here without being able to get what you want out of the server, support or otherwise
