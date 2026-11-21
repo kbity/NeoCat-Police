@@ -1,4 +1,4 @@
-import discord, base64, random
+import discord, base64, random, io
 from discord.ext import commands
 from discord import app_commands
 
@@ -9,19 +9,20 @@ class Fun(commands.Cog):
     @app_commands.command(name="base64-decode", description="decode base64")
     @app_commands.describe(string="text")
     async def unb64(self, ctx: commands.Context, string: str):
+        dec = base64.b64decode(string+'====')
         try:
-            await ctx.response.send_message(f"decoded:\n`{base64.b64decode(string+'==').decode('utf-8')}`")
-        except Exception as e:
-            await ctx.channel.send(f"500 internal server error\n-# {e}")
+            dec = dec.decode('utf-8')
+            await ctx.response.send_message(f"decoded:\n`{dec}`")
+        except UnicodeDecodeError:
+            dat = io.BytesIO(dec)
+            thing = discord.File(fp=dat, filename="decoded.bin")
+            await ctx.response.send_message(f"decoded to bytes:", file=thing)
 
     @app_commands.command(name="base64-encode", description="undecode base64")
     @app_commands.describe(string="text")
     async def b64(self, ctx: commands.Context, string: str):
-        try:
-            byte = base64.b64encode(bytes(string, 'utf-8')) # bytes
-            await ctx.response.send_message(f"encoded:\n`{byte.decode('utf-8')}`")
-        except Exception as e:
-            await ctx.channel.send(f"500 internal server error\n-# {e}")
+        byte = base64.b64encode(bytes(string, 'utf-8')) # bytes
+        await ctx.response.send_message(f"encoded:\n`{byte.decode('utf-8')}`")
 
     @app_commands.command(name="reverse", description="reverses text")
     @app_commands.describe(text="text to reverse")
