@@ -2031,7 +2031,7 @@ async def on_raw_reaction_add(payload):
 
             for reaction in message.reactions:
                 triggered = str(reaction.emoji) == emoji
-                if hasattr(reaction.emoji, "name"):
+                if hasattr(reaction.emoji, "name") and not is_unicode:
                     if all((not triggered, allowgenerics, (reaction.emoji.name == emoji.split(":")[1]))):
                         triggered = True
 
@@ -2071,7 +2071,7 @@ async def on_raw_reaction_add(payload):
 
                     await asyncio.sleep(10) # wait before removing the message
     except Exception as e:
-        print(f"error in starboard handling! {e}")
+        traceback.print_exception(e) # error in starboard handling!
     finally:
         processing_starboard_messages.remove(message.id)
 
